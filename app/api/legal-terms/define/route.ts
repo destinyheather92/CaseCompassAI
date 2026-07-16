@@ -1,14 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { lookupLegalTerm } from "@/lib/legal-sources/legal-term-service";
 import { isRateLimited } from "@/lib/legal-sources/rate-limiter";
+import { clientIdFor } from "@/lib/security/request-identity";
 
 export const runtime = "nodejs";
-
-function clientIdFor(request: NextRequest): string {
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  if (forwardedFor) return forwardedFor.split(",")[0].trim();
-  return request.headers.get("x-real-ip") ?? "unknown";
-}
 
 export async function POST(request: NextRequest) {
   const clientId = clientIdFor(request);

@@ -1,10 +1,9 @@
-type Bucket = {
-  count: number;
-  windowStart: number;
-};
+import { createRateLimiter } from "@/lib/security/rate-limit";
 
 const WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 20;
+
+const limiter = createRateLimiter({ windowMs: WINDOW_MS, max: MAX_REQUESTS_PER_WINDOW });
 
 /**
  * Simple in-memory sliding-window limiter, keyed by client identifier
@@ -13,17 +12,6 @@ const MAX_REQUESTS_PER_WINDOW = 20;
  * server instances, since this state doesn't survive a restart or get
  * shared across them.
  */
-const buckets = new Map<string, Bucket>();
-
 export function isRateLimited(clientId: string): boolean {
-  const now = Date.now();
-  const bucket = buckets.get(clientId);
-
-  if (!bucket || now - bucket.windowStart > WINDOW_MS) {
-    buckets.set(clientId, { count: 1, windowStart: now });
-    return false;
-  }
-
-  bucket.count += 1;
-  return bucket.count > MAX_REQUESTS_PER_WINDOW;
+  return limiter.isLimited(clientId);
 }

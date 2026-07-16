@@ -1,0 +1,252 @@
+// CaseCompass AI — application authorization & domain data.
+//
+// Clerk is the system of record for authentication (sessions, password
+// hashing/verification, login). This schema is the system of record for
+// AUTHORIZATION (role, institution/facility scope, account status,
+// mustChangePassword) and product data. No password or password hash is
+// ever stored here — see docs/behavior/authentication-behavior.md.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+// Prisma 7: connection URLs live in prisma.config.ts (for Migrate) and are
+// passed to the driver adapter at runtime (see lib/db.ts) — not here.
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  INDIVIDUAL
+  INCARCERATED_USER
+  EDUCATOR
+  LEGAL_AID_STAFF
+  INSTITUTION_ADMIN
+  SYSTEM_ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  DISABLED
+  LOCKED
+  PENDING_FIRST_LOGIN
+  TEMPORARY_PASSWORD_EXPIRED
+}
+
+enum IntakeStatus {
+  DRAFT
+  INTERVIEWING
+  NEEDS_CLARIFICATION
+  READY_FOR_REVIEW
+  COMPLETED
+  ABANDONED
+}
+
+enum RoadmapSourceKind {
+  AI_GENERATED
+  DETERMINISTIC_FALLBACK
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+}
+
+model Institution {
+  id     String  @id @default(cuid())
+  name   String
+  code   String  @unique
+  active Boolean @default(true)
+
+  facilities     Facility[]
+  users          User[]
+  intakeSessions IntakeSession[]
+  roadmaps       ResearchRoadmap[]
+  auditLogs      AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+}
+
+model Facility {
+  id            String      @id @default(cuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  name   String
+  code   String
+  active Boolean @default(true)
+
+  users          User[]
+  intakeSessions IntakeSession[]
+  auditLogs      AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([institutionId, code])
+  @@index([institutionId])
+}
+
+/// The application-owned authorization record for a Clerk identity.
+/// `clerkUserId` is the only link to the authentication provider — no
+/// credential material is ever duplicated here.
+model User {
+  id          String @id @default(cuid())
+  clerkUserId String @unique
+
+  role          UserRole
+  accountStatus AccountStatus @default(ACTIVE)
+
+  displayName        String?
+  username           String? @unique
+  internalIdentifier String?
+
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  facilityId    String?
+  facility      Facility?    @relation(fields: [facilityId], references: [id], onDelete: SetNull)
+
+  mustChangePassword         Boolean   @default(false)
+  temporaryPasswordExpiresAt DateTime?
+  passwordChangedAt          DateTime?
+  lastLoginAt                DateTime?
+
+  createdById  String?
+  createdBy    User?   @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdUsers User[]  @relation("UserCreatedBy")
+
+  intakeSessions    IntakeSession[]
+  roadmaps          ResearchRoadmap[]
+  auditLogsAsActor  AuditLog[]        @relation("AuditActor")
+  auditLogsAsTarget AuditLog[]        @relation("AuditTarget")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([institutionId])
+  @@index([facilityId])
+  @@index([role])
+  @@index([accountStatus])
+}
+
+model IntakeSession {
+  id            String       @id @default(cuid())
+  userId        String?
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  facilityId    String?
+  facility      Facility?    @relation(fields: [facilityId], references: [id], onDelete: SetNull)
+
+  status          IntakeStatus @default(DRAFT)
+  caseType        String
+  jurisdiction    String
+  proceduralStage String
+  researchGoals   Json
+  documentTypes   Json
+
+  /// AI-maintained running summary of facts gathered so far — never a raw
+  /// transcript. See lib/ai/prompts/build-intake-interview-input.ts.
+  factualSummary        String @default("")
+  /// string[] of open factual gaps the AI has flagged but not yet resolved.
+  unresolvedInformation Json   @default("[]")
+  /// string[] of topic labels already covered, so the interviewer doesn't
+  /// repeat questions.
+  topicsCovered         Json   @default("[]")
+  /// Number of adaptive (Layer 2) questions asked so far — enforced against
+  /// INTAKE_MAX_AI_QUESTIONS server-side; the model cannot override this.
+  questionCount         Int    @default(0)
+  /// The currently pending, not-yet-answered IntakeQuestion (see
+  /// types/intake-interview.ts), or null when none is pending (draft,
+  /// ready-for-review, completed, abandoned). /answer validates its
+  /// questionId against this before accepting an answer.
+  currentQuestion       Json?
+
+  answers  IntakeAnswer[]
+  roadmaps ResearchRoadmap[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  @@index([userId])
+  @@index([institutionId])
+  @@index([facilityId])
+}
+
+/// One row per adaptive-interview question/answer turn, in order.
+model IntakeAnswer {
+  id              String        @id @default(cuid())
+  intakeSessionId String
+  intakeSession   IntakeSession @relation(fields: [intakeSessionId], references: [id], onDelete: Cascade)
+
+  questionId   String
+  questionText String
+  answerText   String
+  answerType   String
+  sequence     Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([intakeSessionId, sequence])
+  @@index([intakeSessionId])
+}
+
+model ResearchRoadmap {
+  id              String         @id @default(cuid())
+  userId          String?
+  user            User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  intakeSessionId String?
+  intakeSession   IntakeSession? @relation(fields: [intakeSessionId], references: [id], onDelete: SetNull)
+  institutionId   String?
+  institution     Institution?   @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+
+  title      String
+  summary    String
+  sourceKind RoadmapSourceKind
+  /// Full structured ResearchRoadmap payload (see types/roadmap.ts) — never
+  /// raw case narrative beyond what the user already submitted in the
+  /// linked IntakeSession.
+  content    Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([institutionId])
+}
+
+/// Structured security/administrative audit trail. Never store secrets,
+/// password material, or full case narratives here — see
+/// docs/behavior/audit-events.md and lib/security/audit-log.ts, which
+/// enforces an allowlist of metadata keys before a row is written.
+model AuditLog {
+  id String @id @default(cuid())
+
+  actorUserId String?
+  actorUser   User?   @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  targetUserId String?
+  targetUser   User?   @relation("AuditTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  facilityId    String?
+  facility      Facility?    @relation(fields: [facilityId], references: [id], onDelete: SetNull)
+
+  action   String
+  outcome  AuditOutcome
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([institutionId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([actorUserId])
+  @@index([targetUserId])
+}

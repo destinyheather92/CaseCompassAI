@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Compass, Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { SignInButton, SignUpButton, Show, UserButton } from "@clerk/nextjs";
 import { navLinks } from "@/lib/site-data";
 
 function idFromHref(href: string) {
@@ -156,13 +157,28 @@ export function Navbar() {
             })}
           </ul>
 
-          <div className="hidden lg:block">
-            <Link
-              href="/#get-started"
-              className="group inline-flex items-center justify-center rounded-full border border-cc-purple/60 px-5 py-2.5 text-sm font-semibold text-cc-text transition-all duration-300 hover:border-cc-purple hover:shadow-[0_0_24px_rgba(139,92,246,0.45)] outline-none focus-visible:ring-2 focus-visible:ring-cc-purple focus-visible:ring-offset-2 focus-visible:ring-offset-cc-bg"
-            >
-              Get Started
-            </Link>
+          <div className="hidden items-center gap-2 lg:flex">
+            <Show when="signed-out">
+              <SignInButton mode="modal">
+                <button
+                  type="button"
+                  className="rounded-full px-4 py-2.5 text-sm font-medium text-cc-muted transition-colors hover:text-cc-text outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
+                >
+                  Sign In
+                </button>
+              </SignInButton>
+              <SignUpButton mode="modal">
+                <button
+                  type="button"
+                  className="group inline-flex items-center justify-center rounded-full border border-cc-purple/60 px-5 py-2.5 text-sm font-semibold text-cc-text transition-all duration-300 hover:border-cc-purple hover:shadow-[0_0_24px_rgba(139,92,246,0.45)] outline-none focus-visible:ring-2 focus-visible:ring-cc-purple focus-visible:ring-offset-2 focus-visible:ring-offset-cc-bg"
+                >
+                  Get Started
+                </button>
+              </SignUpButton>
+            </Show>
+            <Show when="signed-in">
+              <UserButton />
+            </Show>
           </div>
 
           <button
@@ -222,14 +238,33 @@ export function Navbar() {
                     </li>
                   );
                 })}
-                <li className="pt-2">
-                  <Link
-                    href="/#get-started"
-                    onClick={() => setOpen(false)}
-                    className="flex w-full items-center justify-center rounded-full border border-cc-purple/60 px-5 py-3 text-base font-semibold text-cc-text hover:border-cc-purple outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
-                  >
-                    Get Started
-                  </Link>
+                <li className="flex flex-col gap-2 pt-2">
+                  <Show when="signed-out">
+                    <SignInButton mode="modal">
+                      <button
+                        type="button"
+                        onClick={() => setOpen(false)}
+                        className="flex w-full items-center justify-center rounded-full border border-transparent px-5 py-3 text-base font-medium text-cc-muted hover:bg-white/[0.04] hover:text-cc-text outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
+                      >
+                        Sign In
+                      </button>
+                    </SignInButton>
+                    <SignUpButton mode="modal">
+                      <button
+                        type="button"
+                        onClick={() => setOpen(false)}
+                        className="flex w-full items-center justify-center rounded-full border border-cc-purple/60 px-5 py-3 text-base font-semibold text-cc-text hover:border-cc-purple outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
+                      >
+                        Get Started
+                      </button>
+                    </SignUpButton>
+                  </Show>
+                  <Show when="signed-in">
+                    <div className="flex items-center justify-center gap-3 rounded-full border border-cc-border px-5 py-2.5">
+                      <UserButton />
+                      <span className="text-sm font-medium text-cc-muted">Your account</span>
+                    </div>
+                  </Show>
                 </li>
               </ul>
             </motion.div>

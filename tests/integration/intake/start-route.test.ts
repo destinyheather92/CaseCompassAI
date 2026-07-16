@@ -1,0 +1,174 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+import { prisma } from "@/lib/db";
+
+let mockClerkUserId: string | null = null;
+
+vi.mock("@clerk/nextjs/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@clerk/nextjs/server")>();
+  return {
+    ...actual,
+    auth: vi.fn(async () => ({ userId: mockClerkUserId })),
+  };
+});
+
+vi.mock("@/lib/intake/start-intake-session", () => ({
+  startIntakeSession: vi.fn(),
+}));
+
+const { startIntakeSession } = await import("@/lib/intake/start-intake-session");
+const { POST } = await import("@/app/api/intake/interview/start/route");
+
+const createdUserIds: string[] = [];
+
+function postRequest(body: unknown, headers: Record<string, string> = {}) {
+  return new NextRequest("https://example.com/api/intake/interview/start", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+const validInput = {
+  caseType: "criminal",
+  jurisdiction: "SC",
+  proceduralStage: "post-conviction",
+  researchGoals: ["understand-case"],
+  documentTypes: ["court-opinion"],
+};
+
+describe("POST /api/intake/interview/start", () => {
+  beforeEach(() => {
+    mockClerkUserId = null;
+    vi.mocked(startIntakeSession).mockReset();
+  });
+
+  afterEach(async () => {
+    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    createdUserIds.length = 0;
+  });
+
+  it("allows a guest (unauthenticated) request", async () => {
+    vi.mocked(startIntakeSession).mockResolvedValueOnce({
+      status: "started",
+      sessionId: "s1",
+      intakeStatus: "interviewing",
+      question: null,
+      factualSummary: "",
+      unresolvedInformation: [],
+      topicsCovered: [],
+      questionCount: 0,
+    });
+
+    const response = await POST(postRequest(validInput));
+    expect(response.status).toBe(201);
+    expect(startIntakeSession).toHaveBeenCalledWith(
+      validInput,
+      expect.objectContaining({ userId: null, institutionId: null, facilityId: null }),
+    );
+  });
+
+  it("allows an active, password-complete authenticated user and passes their scope", async () => {
+    const user = await prisma.user.create({
+      data: { clerkUserId: `clerk-intake-start-${Date.now()}`, role: "INDIVIDUAL", accountStatus: "ACTIVE" },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
+    vi.mocked(startIntakeSession).mockResolvedValueOnce({
+      status: "started",
+      sessionId: "s2",
+      intakeStatus: "interviewing",
+      question: null,
+      factualSummary: "",
+      unresolvedInformation: [],
+      topicsCovered: [],
+      questionCount: 0,
+    });
+
+    const response = await POST(postRequest(validInput));
+    expect(response.status).toBe(201);
+    expect(startIntakeSession).toHaveBeenCalledWith(validInput, expect.objectContaining({ userId: user.id }));
+  });
+
+  it("rejects a signed-in user who must still change their password, before calling the service", async () => {
+    const user = await prisma.user.create({
+      data: {
+        clerkUserId: `clerk-intake-start-pending-${Date.now()}`,
+        role: "INDIVIDUAL",
+        accountStatus: "PENDING_FIRST_LOGIN",
+        mustChangePassword: true,
+      },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
+    const response = await POST(postRequest(validInput));
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.status).toBe("must-change-password");
+    expect(startIntakeSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects a disabled signed-in user", async () => {
+    const user = await prisma.user.create({
+      data: { clerkUserId: `clerk-intake-start-disabled-${Date.now()}`, role: "INDIVIDUAL", accountStatus: "DISABLED" },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
+    const response = await POST(postRequest(validInput));
+    expect(response.status).toBe(403);
+    expect(startIntakeSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed JSON body with 400 and never calls the service", async () => {
+    const response = await POST(
+      new NextRequest("https://example.com/api/intake/interview/start", { method: "POST", body: "{not json" }),
+    );
+    expect(response.status).toBe(400);
+    expect(startIntakeSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized request via Content-Length before parsing the body", async () => {
+    const response = await POST(postRequest(validInput, { "content-length": "999999" }));
+    expect(response.status).toBe(413);
+    expect(startIntakeSession).not.toHaveBeenCalled();
+  });
+
+  it("maps invalid-request to 400 and provider-unavailable to 503", async () => {
+    vi.mocked(startIntakeSession).mockResolvedValueOnce({ status: "invalid-request", message: "bad" });
+    let response = await POST(postRequest(validInput));
+    expect(response.status).toBe(400);
+
+    vi.mocked(startIntakeSession).mockResolvedValueOnce({ status: "provider-unavailable", message: "unavailable" });
+    response = await POST(postRequest(validInput));
+    expect(response.status).toBe(503);
+  });
+
+  it("enforces rate limiting per guest IP", async () => {
+    vi.mocked(startIntakeSession).mockResolvedValue({
+      status: "started",
+      sessionId: "s3",
+      intakeStatus: "interviewing",
+      question: null,
+      factualSummary: "",
+      unresolvedInformation: [],
+      topicsCovered: [],
+      questionCount: 0,
+    });
+
+    const makeRateLimitedRequest = () =>
+      new NextRequest("https://example.com/api/intake/interview/start", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.77" },
+        body: JSON.stringify(validInput),
+      });
+
+    let lastResponse;
+    for (let i = 0; i < 11; i++) {
+      lastResponse = await POST(makeRateLimitedRequest());
+    }
+    expect(lastResponse?.status).toBe(429);
+  });
+});
