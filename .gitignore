@@ -12,6 +12,9 @@
 
 # testing
 /coverage
+/test-results
+/playwright-report
+/blob-report
 
 # next.js
 /.next/
@@ -41,3 +44,6 @@ yarn-error.log*
 next-env.d.ts
 
 /lib/generated/prisma
+
+# clerk configuration (can include secrets)
+/.clerk/

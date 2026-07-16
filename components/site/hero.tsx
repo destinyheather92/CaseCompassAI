@@ -82,7 +82,7 @@ function HeroCopy() {
         className="mt-9 flex flex-col gap-4 sm:flex-row"
       >
         <Link
-          href="#get-started"
+          href="/get-started"
           className="group pointer-events-auto inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-cc-purple to-cc-violet px-7 py-3.5 text-sm font-semibold text-white shadow-[0_0_30px_rgba(139,92,246,0.35)] transition-all duration-300 hover:shadow-[0_0_44px_rgba(168,85,247,0.55)] hover:-translate-y-0.5 outline-none focus-visible:ring-2 focus-visible:ring-cc-teal focus-visible:ring-offset-2 focus-visible:ring-offset-cc-bg"
         >
           <Compass

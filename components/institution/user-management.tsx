@@ -76,7 +76,10 @@ export function UserManagement() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    // Defer past the synchronous portion of refresh() (which calls
+    // setLoading(true) immediately) so the effect body itself never
+    // triggers a setState synchronously during commit.
+    void Promise.resolve().then(refresh);
   }, [refresh]);
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {

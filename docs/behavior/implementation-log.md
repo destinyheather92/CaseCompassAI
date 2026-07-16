@@ -38,6 +38,104 @@ A missing API key must degrade safely (invariant: "fail safely with a clear deve
 
 - `OPENAI_INTAKE_MODEL` default (`gpt-5.6-luna`) is unverified — no live OpenAI key is configured in this environment, so I could not confirm it against an actual account's available Responses-API models with Structured Outputs support.
 
+---
+
+## 2026-07-16 — AI intake interview: schema, provider, service layer, and API routes
+
+### Expected Behavior
+
+A guided intake flow where deterministic Layer-1 answers (case category, jurisdiction, procedural stage, research goals, document types) kick off an AI-adaptive Layer-2 interview: one question at a time, server-enforced question ceiling, never answers legal questions, requires explicit user review/confirmation before the session can be marked complete. Guests and authenticated users share the same endpoints; a signed-in but disabled/locked/must-change-password user is never silently treated as a guest.
+
+### Security Reason
+
+This is the highest-risk AI-integration surface in the app so far — untrusted user text flows into a prompt, and AI output flows back into persisted state and eventually (in a later phase) a roadmap. Every invariant in the spec traces to a concrete enforcement point: schema-validated AI output (never trust `output_parsed` blindly, even from the SDK's own parser — re-validated independently), a server-side question-count ceiling the model cannot override, and strict session-ownership checks so one user's intake answers are never readable by another.
+
+### Tests Added (all red before implementation)
+
+- `tests/unit/intake/intake-interview-schema.test.ts` (28 tests, including the `zodTextFormat` compatibility check that caught a real bug — see Implementation)
+- `tests/unit/intake/intake-status.test.ts`, `intake-deterministic-schema.test.ts`, `intake-access.test.ts`
+- `tests/unit/ai/build-intake-interview-input.test.ts`, `intake-interviewer-system-prompt.test.ts`, `openai-intake-interviewer.test.ts`
+- `tests/integration/authorization/authorize-optional-user.test.ts`
+- `tests/integration/intake/start-intake-session.test.ts`, `submit-intake-answer.test.ts`, `get-and-complete-intake-session.test.ts`
+- `tests/integration/intake/start-route.test.ts`, `answer-route.test.ts`, `session-detail-routes.test.ts`
+- `tests/unit/security/request-limits.test.ts`
+
+### Implementation
+
+Created: `lib/intake/intake-interview-schema.ts`, `intake-deterministic-schema.ts`, `intake-status.ts`, `intake-access.ts`, `start-intake-session.ts`, `submit-intake-answer.ts`, `get-intake-session.ts`, `complete-intake-session.ts`; `lib/ai/prompts/intake-interviewer-system.ts`, `build-intake-interview-input.ts`; `lib/ai/providers/intake-interviewer-provider.ts`, `openai-intake-interviewer.ts`; `lib/security/request-limits.ts`; `types/intake-interview.ts`; `tests/helpers/fake-intake-interviewer-provider.ts`; the four route handlers under `app/api/intake/interview/`.
+
+Real bug caught by testing against the actual SDK rather than assuming: OpenAI's Structured Outputs strict mode rejects `.optional()` Zod fields entirely (`choices` on `IntakeQuestionSchema` must be `.nullable()` instead — present-but-null, not omittable). Found this by writing a test that actually calls `zodTextFormat()` on the schema, not just asserting shape in isolation — worth keeping that test as a regression guard against this class of mistake reappearing.
+
+Schema correction mid-build: added `IntakeSession.currentQuestion` (Json, nullable) after starting the service layer, once it became clear `/answer` needs to know which question is actually pending server-side to validate against (rather than trusting the client's `questionId` blindly). Second small migration (`20260716173600_intake_current_question`).
+
+Idempotent-retry design for `/answer`: the answer is persisted *before* the next AI call, so a provider failure after a successful save never loses the user's answer. A retry with the same `questionId` detects the already-saved row and skips re-inserting, then just retries the AI call — no separate "retry" endpoint needed. Verified directly by a test that fails the provider once, confirms the answer row exists, retries, and confirms no duplicate was created.
+
+Question-limit enforcement happens server-side against the actual persisted `IntakeAnswer` row count, before the provider is ever called again once the ceiling is hit — the model has no path to override it.
+
+Route tests follow the exact pattern already established in Phase 1 (`tests/integration/institution/users-route.test.ts`): mock `@clerk/nextjs/server`'s `auth()` plus the service function under test, so route tests verify HTTP wiring (auth gating, status-code mapping, rate limiting, request-size limits) without re-testing business logic already covered at the service layer.
+
+Also fixed, while running the full suite: a genuine cross-file test-isolation bug in `start-intake-session.test.ts` (a "no session was created" assertion scoped only by `jurisdiction`/`caseType`, which collided with concurrently-running fixtures from other intake test files sharing those same default values under Vitest's parallel file execution) — fixed by uniquely-suffixing that one test's input, matching the unique-fixture convention used everywhere else. Also fixed one pre-existing lint error unrelated to this phase (`components/institution/user-management.tsx` — synchronous `setState` inside a `useEffect` body, flagged by `react-hooks/set-state-in-effect`; fixed by deferring past the callback's synchronous portion rather than duplicating fetch logic).
+
+### Verification
+
+- `npx vitest run`: **43 test files, 304 tests, all passed**
+- `npx tsc --noEmit`: clean
+- `npx eslint .`: clean (zero errors after the fix above)
+
+### Known Limitations
+
+- No real OpenAI key configured — `OpenAIIntakeInterviewer` is fully implemented and tested via dependency injection, but has never made a real API call in this environment.
+- No dedicated "edit a prior answer" endpoint — the review step (next phase) can display the factual summary and unresolved items, but revising an individual already-answered question requires more design (would need to decide how re-answering an earlier turn interacts with the AI's running summary/topics-covered state) than fits this phase's scope. Documented here rather than silently dropped.
+- `currentQuestion`/`researchGoals`/`documentTypes`/`unresolvedInformation`/`topicsCovered` are stored as Prisma `Json` columns without a DB-level schema constraint — validity is enforced entirely at the application layer (Zod on write). Acceptable for this stage; worth a Postgres CHECK constraint or generated column if this schema sees heavier direct SQL access later.
+
+---
+
+## 2026-07-16 — Guided intake UI, `/get-started`, evaluation fixtures, and e2e
+
+### Expected Behavior
+
+`/get-started` — previously nonexistent — walks a guest or authenticated user through five deterministic questions, then the AI interview turn-by-turn, then a review-and-confirm step, ending at a `completed` intake session (no roadmap UI — deferred). The landing page's hero CTA, dead since the marketing site was first built, needed to actually go there.
+
+### Security Reason
+
+This is where every previously-tested backend behavior becomes something a real user can actually drive — an untested UI wired incorrectly could silently defeat all of it (e.g. sending the wrong `questionId`, losing answers on error, or rendering AI-supplied text as HTML). The evaluation fixtures and the e2e run exist specifically to catch integration-level mistakes that per-unit tests can't see.
+
+### Tests Added (all red before implementation)
+
+- `tests/components/onboarding/choice-steps.test.tsx`, `jurisdiction-step.test.tsx`, `adaptive-question.test.tsx`, `intake-loading-and-recovery.test.tsx`, `intake-review.test.tsx`, `welcome-step.test.tsx`, `get-started-page.test.tsx`
+- `tests/unit/intake/use-intake-store.test.ts`
+- `tests/integration/intake/evaluation-fixtures.test.ts` (11 fictional scenarios)
+- `tests/e2e/ai-intake-interview.spec.ts`
+
+### Implementation
+
+Created: `stores/use-intake-store.ts` (first real Zustand usage in this codebase), `components/onboarding/*` (single-choice-step, multi-choice-step, jurisdiction-step, adaptive-question, intake-loading, intake-recovery, intake-review, welcome-step), `lib/jurisdictions-data.ts`, `lib/intake-options-data.ts`, `types/intake.ts`, `app/get-started/page.tsx`, `playwright.config.ts`, `tests/fixtures/intake-scenarios.ts`. Added shadcn `textarea`/`radio-group`/`checkbox` (base-ui style, matching the existing `components.json` convention). Modified `components/site/hero.tsx` (`href="#get-started"` → `href="/get-started"`) — the only landing-page edit, fixing a link that pointed at an element that never existed anywhere in the app.
+
+Two real bugs caught by tests, not by inspection:
+1. **Invalid HTML id from unsanitized choice text.** `AdaptiveQuestion`'s radio/checkbox ids were built directly from AI-supplied choice text (e.g. `id="choice-Court opinion"`) — a space in an HTML id attribute breaks the `aria-labelledby` association per spec, which a real accessible-name query caught immediately (`getByRole("checkbox", {name: "Court opinion"})` found nothing). Fixed by switching to index-based ids (`multi-choice-0`, `single-choice-0`, ...).
+2. **Ambiguous e2e locator, not a component bug** — the review screen legitimately shows both the factual summary text and the matching answered-question text, so a loose `/jury trial/i` regex matched two elements. This was actually confirmation the component does the right thing (shows both); the test just needed a more specific locator.
+
+Also fixed two more `react-hooks/set-state-in-effect` lint errors during the final verification pass (same class of issue fixed once already in Phase 1's `user-management.tsx`): `AdaptiveQuestion` was resetting local answer state inside the same effect that moves focus — removed the reset entirely and documented that callers must render with `key={question.id}` (React's own recommended pattern for "reset state when a prop changes," used in `app/get-started/page.tsx`) instead of an effect-driven reset.
+
+The deliberate decision to **not** repoint the "For Facilities" → "Request a Facility Demo" button at `/get-started`: that CTA's own copy is about requesting an institutional demo, not starting a personal intake — redirecting it into the guided-intake wizard would be actively misleading, not merely incomplete. Left as a known, documented gap (`docs/behavior/get-started-flow.md`) rather than silently doing something plausible-but-wrong.
+
+### Verification
+
+- `npx vitest run`: **52 test files, 372 tests, all passed** (final run, after this entry was written)
+- `npx tsc --noEmit`: clean
+- `npx eslint .`: clean
+- `npx next build`: clean production build, `/get-started` compiles as a static route, all four `/api/intake/interview/*` routes compile as dynamic routes
+- Manual check via `npm run dev`: `/get-started` renders, hero CTA link confirmed pointing at `/get-started`
+- `npx playwright test tests/e2e/ai-intake-interview.spec.ts`: **1 passed** — run for real against a live `npm run dev` instance, with the AI interview turns mocked via Playwright's `page.route()` network interception (no production-code test-mode backdoor, no real OpenAI calls)
+
+### Known Limitations
+
+- No in-place editor for a single already-answered Layer-2 question — "Edit" on the review screen returns to Layer 1 and restarts the AI interview from scratch. Documented in `docs/behavior/get-started-flow.md`.
+- No "Clear My Session" button surfaced in the UI yet, though the store actions it would call already exist and are tested. Documented in `docs/behavior/shared-device-privacy.md`.
+- Local-persistence gating is a single deployment-wide flag, not per-account detection — documented simplification, see `docs/behavior/shared-device-privacy.md`.
+- Audit metadata for the intake events is reviewed by hand to confirm it excludes narrative/summary text, but (unlike the general `recordAuditEvent` redaction guard, which *is* directly tested) there's no test specifically asserting this for the `intake_interview_*` action names — worth adding.
+- The e2e suite has exactly one spec. The task's fuller Playwright list (institutional lifecycle, deactivation, cross-institution boundary — from Phase 1's original scope) remains written-but-unexecuted per that phase's documented decision; only this phase's new spec was run.
+
 ## 2026-07-15 — Database & Prisma foundation
 
 ### Expected Behavior
