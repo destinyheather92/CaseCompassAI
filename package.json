@@ -12,7 +12,8 @@
     "test:security": "vitest run tests/unit/security tests/integration/auth tests/integration/authorization tests/integration/institution tests/integration/audit",
     "test:e2e": "playwright test",
     "type-check": "tsc --noEmit",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
