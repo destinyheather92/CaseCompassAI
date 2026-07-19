@@ -1,3 +1,5 @@
+import { requireOptionalUser } from "@/lib/auth/authorization";
+import { resolveHomepageNavState } from "@/lib/dashboard/homepage-nav-state";
 import { Navbar } from "@/components/site/navbar";
 import { Hero } from "@/components/site/hero";
 import { ImpactStats } from "@/components/site/impact-stats";
@@ -9,10 +11,13 @@ import { Resources } from "@/components/site/resources";
 import { LegalDisclaimer } from "@/components/site/legal-disclaimer";
 import { TrustFooter } from "@/components/site/trust-footer";
 
-export default function Home() {
+export default async function Home() {
+  const authResult = await requireOptionalUser();
+  const authenticatedNav = authResult.ok && authResult.user ? await resolveHomepageNavState(authResult.user.id) : null;
+
   return (
     <div className="relative flex min-h-screen flex-col overflow-x-hidden bg-cc-bg">
-      <Navbar />
+      <Navbar authenticatedNav={authenticatedNav} />
       <main className="flex-1">
         <Hero />
         <ImpactStats />

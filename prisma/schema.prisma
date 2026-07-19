@@ -53,6 +53,39 @@ enum AuditOutcome {
   FAILURE
 }
 
+enum RoadmapStepStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum SavedResourceType {
+  RESOURCE
+  LEGAL_TERM
+  ROADMAP_STEP
+  SOURCE
+  NOTE
+}
+
+/// Safe, UI-facing activity events — never security audit events (see
+/// AuditLog) and never full narrative text. See
+/// lib/activity/approved-activity-events.ts for the allowlist this enum
+/// must stay in sync with.
+enum UserActivityType {
+  INTAKE_STARTED
+  INTAKE_ANSWER_UPDATED
+  INTAKE_REVIEW_OPENED
+  INTAKE_CONFIRMED
+  ROADMAP_GENERATED
+  ROADMAP_STEP_STARTED
+  ROADMAP_STEP_COMPLETED
+  RESOURCE_VIEWED
+  LEGAL_TERM_SEARCHED
+  NOTE_SAVED
+  RESOURCE_SAVED
+  CASE_SAVED
+}
+
 model Institution {
   id     String  @id @default(cuid())
   name   String
@@ -115,12 +148,21 @@ model User {
   passwordChangedAt          DateTime?
   lastLoginAt                DateTime?
 
+  /// Non-sensitive UI/session preferences only (e.g. reduced motion, local
+  /// persistence opt-in when institution policy allows it). Never an
+  /// authorization control — see lib/auth/authorization.ts for that.
+  preferences Json?
+
   createdById  String?
   createdBy    User?   @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdUsers User[]  @relation("UserCreatedBy")
 
   intakeSessions    IntakeSession[]
   roadmaps          ResearchRoadmap[]
+  roadmapProgress   RoadmapProgress[]
+  savedResources    SavedResource[]
+  savedCases        SavedCase[]
+  activity          UserActivity[]
   auditLogsAsActor  AuditLog[]        @relation("AuditActor")
   auditLogsAsTarget AuditLog[]        @relation("AuditTarget")
 
@@ -210,14 +252,127 @@ model ResearchRoadmap {
   sourceKind RoadmapSourceKind
   /// Full structured ResearchRoadmap payload (see types/roadmap.ts) — never
   /// raw case narrative beyond what the user already submitted in the
-  /// linked IntakeSession.
+  /// linked IntakeSession. Each step within `content.steps` has a stable
+  /// `id` that RoadmapProgress.stepId references.
   content    Json
+
+  progress   RoadmapProgress[]
+  savedCases SavedCase[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([institutionId])
+}
+
+/// Per-user, per-step progress on a roadmap. Never modifies the original
+/// roadmap content (`ResearchRoadmap.content`) — this is tracking data
+/// layered on top of it.
+model RoadmapProgress {
+  id        String          @id @default(cuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roadmapId String
+  roadmap   ResearchRoadmap @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+
+  stepId String
+  status RoadmapStepStatus @default(NOT_STARTED)
+  /// Private note, visible only to the owning user — never rendered
+  /// anywhere else and never included in activity/audit metadata.
+  note   String?
+
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, roadmapId, stepId])
+  @@index([userId, roadmapId])
+}
+
+/// User-owned saved items (resources, glossary terms, roadmap steps,
+/// source suggestions, notes). Duplicate saves are prevented by the
+/// unique constraint, not just application logic.
+model SavedResource {
+  id           String            @id @default(cuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resourceType SavedResourceType
+  /// Stable identifier within resourceType (e.g. a resource slug, a
+  /// glossary term name, a roadmap step id) — what the uniqueness
+  /// constraint is scoped by.
+  resourceKey  String
+  title        String
+  /// Validated/sanitized internal or verified external URL — see
+  /// lib/saved/saved-resource-schema.ts.
+  href         String?
+  metadata     Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, resourceType, resourceKey])
+  @@index([userId, createdAt])
+}
+
+/// A verified case a user has chosen to keep, retrieved through a real
+/// legal source provider (see lib/case-search/) — never an AI-invented
+/// summary without the underlying source record. `roadmapId` is optional
+/// since a case may be saved from a standalone search not tied to any
+/// one roadmap. The unique constraint prevents saving the same
+/// provider's case twice.
+model SavedCase {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  roadmapId String?
+  roadmap   ResearchRoadmap? @relation(fields: [roadmapId], references: [id], onDelete: SetNull)
+
+  /// Which CaseSourceProvider retrieved this record (e.g. "courtlistener") — see lib/case-search/types.ts.
+  providerName   String
+  providerCaseId String
+
+  caseName     String
+  citation     String?
+  court        String
+  jurisdiction String
+  decisionDate DateTime?
+  docketNumber String?
+  sourceUrl    String
+  sourceName   String
+  /// The roadmap research topic this case was matched against, if saved from a roadmap-scoped search.
+  matchedTopic String?
+  /// Private note, visible only to the owning user.
+  note         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, providerName, providerCaseId])
+  @@index([userId, createdAt])
+  @@index([roadmapId])
+}
+
+/// Safe, UI-facing activity history — see docs/behavior/user-dashboard.md
+/// and lib/activity/approved-activity-events.ts. Never full narrative
+/// text, prompts, or secrets; distinct from AuditLog (security/ops
+/// history).
+model UserActivity {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        UserActivityType
+  title       String
+  description String?
+  href        String?
+  metadata    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 /// Structured security/administrative audit trail. Never store secrets,

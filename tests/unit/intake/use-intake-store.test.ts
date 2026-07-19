@@ -141,4 +141,65 @@ describe("useIntakeStore", () => {
     expect(state.factualSummary).toBe("");
     expect(state.currentQuestion).toBeNull();
   });
+
+  describe("hydrateFromSession", () => {
+    const baseSession = {
+      id: "s1",
+      status: "interviewing" as const,
+      caseType: "criminal",
+      jurisdiction: "SC",
+      proceduralStage: "post-conviction",
+      researchGoals: ["understand-case"],
+      documentTypes: ["court-opinion"],
+      factualSummary: "Summary so far.",
+      unresolvedInformation: ["Exact sentencing date"],
+      topicsCovered: ["case-type"],
+      currentQuestion: {
+        id: "q2",
+        text: "What was the sentence?",
+        purpose: "x",
+        answerType: "short-text" as const,
+        choices: null,
+        required: true,
+        sensitiveInformationWarning: null,
+      },
+      answers: [{ questionId: "q1", questionText: "What court?", answerText: "Richland County", answerType: "short-text", sequence: 1 }],
+    };
+
+    it("restores Layer-1 answers, AI state, and prior turns, and jumps to the ai-interview step", () => {
+      useIntakeStore.getState().hydrateFromSession(baseSession);
+      const state = useIntakeStore.getState();
+      expect(state.caseType).toBe("criminal");
+      expect(state.jurisdiction).toBe("SC");
+      expect(state.proceduralStage).toBe("post-conviction");
+      expect(state.researchGoals).toEqual(["understand-case"]);
+      expect(state.documentTypes).toEqual(["court-opinion"]);
+      expect(state.sessionId).toBe("s1");
+      expect(state.intakeStatus).toBe("interviewing");
+      expect(state.currentQuestion?.id).toBe("q2");
+      expect(state.factualSummary).toBe("Summary so far.");
+      expect(state.unresolvedInformation).toEqual(["Exact sentencing date"]);
+      expect(state.answeredTurns).toEqual([{ questionId: "q1", questionText: "What court?", answerText: "Richland County" }]);
+      expect(state.step).toBe("ai-interview");
+    });
+
+    it("jumps to the review step for a ready-for-review session", () => {
+      useIntakeStore.getState().hydrateFromSession({ ...baseSession, status: "ready-for-review", currentQuestion: null });
+      expect(useIntakeStore.getState().step).toBe("review");
+    });
+
+    it("does not repeat already-answered questions — answeredTurns is restored, not cleared", () => {
+      useIntakeStore.getState().hydrateFromSession(baseSession);
+      expect(useIntakeStore.getState().answeredTurns).toHaveLength(1);
+    });
+
+    it("clears any stale error and resets acknowledged", () => {
+      useIntakeStore.getState().setError("stale error");
+      useIntakeStore.getState().setAcknowledged(true);
+      useIntakeStore.getState().hydrateFromSession(baseSession);
+      const state = useIntakeStore.getState();
+      expect(state.error).toBeNull();
+      expect(state.acknowledged).toBe(false);
+    });
+  });
 });

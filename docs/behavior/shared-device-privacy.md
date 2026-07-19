@@ -14,7 +14,17 @@ Institutional devices may be shared by multiple participants. This document cove
 
 The original spec describes *per-account* dynamic detection (an institution-managed account should have persistence disabled automatically, regardless of the deployment-wide flag; a guest on their own personal device should default to persistence enabled). This build implements the simpler, single global flag instead — deferred because per-account detection would require exposing a client-visible "is this an institution-managed account" signal that doesn't exist yet in this codebase, and a wrong default in that direction (accidentally enabling persistence for an institution-managed account) would be a real privacy problem, whereas the conservative single-flag version can only ever be *more* restrictive than intended, never less. Recommended follow-up: expose a minimal, non-sensitive "account kind" signal (e.g. via a Clerk public metadata field synced from Prisma at session-token-claim time) so the store can make this decision per-account rather than per-deployment.
 
+## Clear My Session (dashboard)
+
+`lib/client/user-scoped-storage.ts` and `components/dashboard/clear-session-button.tsx` (Phase 3) add the explicit shared-device control this section previously listed as missing:
+
+- **Every** CaseCompass client storage key — the dashboard's own (`casecompass:<userKey>:<key>`) and the pre-existing Zustand intake-store key (`casecompass-intake-v1`) — shares the `casecompass` namespace prefix, so `clearAllLocalSessionData()` can find and remove all of them from both `localStorage` and `sessionStorage` in one pass without having to separately enumerate each feature's key names.
+- The action removes local data unconditionally, regardless of the `NEXT_PUBLIC_INSTITUTION_LOCAL_PERSISTENCE` flag's current value — stale data can predate a flag change, so clearing is never gated the same way writing is.
+- It clears local data and signs the user out via Clerk **even if** the server-side `POST /api/dashboard/clear-session` audit notification fails — the privacy action itself is never blocked by a network error.
+- Requires an explicit two-step confirm (not a single click), since it signs the user out immediately. Present in the dashboard sidebar, mobile nav, and Settings page.
+- The server-side endpoint records only an audit event (`dashboard_session_cleared`, no case data, redacted via the same guard as every other audit event) — it does not and cannot reach into the browser to clear storage itself; that half of the action is inherently client-side.
+
 ## What's not yet implemented
 
-- No explicit "Clear My Session" button exists yet in the UI (the store's `clearSession()`/`reset()` actions exist and are tested, but nothing in `app/get-started/page.tsx` currently exposes a manual clear action to the user directly — "Start Over" on the Welcome step calls `reset()`, which covers the same need when returning to Welcome, but not from mid-flow).
 - No session-timeout warning or automatic expiration exists yet for the guided intake flow specifically (Clerk's own session timeout applies to authenticated users generally, per Phase 1).
+- Clear My Session removes *all* `casecompass`-namespaced keys on the device, not just the current user's — on a genuinely shared device with multiple prior users, this is the correct (more thorough) behavior, but it means one user's "clear my session" also clears any other user's leftover local draft data on that same browser profile, which is a deliberate tradeoff (a shared device shouldn't be trusted to retain a *previous* user's draft anyway) rather than an oversight.

@@ -67,8 +67,38 @@ interface IntakeActions {
     topicsCovered: string[];
   }) => void;
   recordAnsweredTurn: (questionId: string, questionText: string, answerText: string) => void;
+  hydrateFromSession: (session: ResumableIntakeSession) => void;
   clearSession: () => void;
   reset: () => void;
+}
+
+/** Mirrors the shape of IntakeSessionView (lib/intake/get-intake-session.ts) — defined inline rather than imported so this client-bundled store never pulls in that server-touching module, even as a type-only import. */
+export interface ResumableIntakeSession {
+  id: string;
+  status: IntakeStatus;
+  caseType: string;
+  jurisdiction: string;
+  proceduralStage: string;
+  researchGoals: string[];
+  documentTypes: string[];
+  factualSummary: string;
+  unresolvedInformation: string[];
+  topicsCovered: string[];
+  currentQuestion: IntakeQuestion | null;
+  answers: { questionId: string; questionText: string; answerText: string }[];
+}
+
+function stepForStatus(status: IntakeStatus): IntakeStep {
+  switch (status) {
+    case "ready-for-review":
+      return "review";
+    case "completed":
+      return "complete";
+    case "abandoned":
+      return "welcome";
+    default:
+      return "ai-interview";
+  }
 }
 
 const initialState: IntakeState = {
@@ -171,6 +201,35 @@ export const useIntakeStore = create<IntakeState & IntakeActions>()(
         set((state) => ({
           answeredTurns: [...state.answeredTurns, { questionId, questionText, answerText }],
         })),
+
+      /**
+       * Restores server-persisted intake state into the client store for
+       * "Continue Intake" — never restarts from the beginning and never
+       * repeats an already-answered question, since answeredTurns and
+       * currentQuestion come directly from what the server already has.
+       */
+      hydrateFromSession: (session) =>
+        set({
+          caseType: session.caseType as CaseType,
+          jurisdiction: session.jurisdiction,
+          proceduralStage: session.proceduralStage as ProceduralStage,
+          researchGoals: session.researchGoals as ResearchGoal[],
+          documentTypes: session.documentTypes as DocumentType[],
+          sessionId: session.id,
+          intakeStatus: session.status,
+          currentQuestion: session.currentQuestion,
+          factualSummary: session.factualSummary,
+          unresolvedInformation: session.unresolvedInformation,
+          topicsCovered: session.topicsCovered,
+          answeredTurns: session.answers.map((answer) => ({
+            questionId: answer.questionId,
+            questionText: answer.questionText,
+            answerText: answer.answerText,
+          })),
+          step: stepForStatus(session.status),
+          acknowledged: false,
+          error: null,
+        }),
 
       clearSession: () =>
         set({

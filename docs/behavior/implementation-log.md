@@ -282,3 +282,108 @@ Architectural decision, continuing the pattern from the auth foundation: every f
 
 - No bulk/CSV account import (mentioned in the planning docs as a future capability) — this build only supports one-at-a-time creation, matching the task's required API surface.
 - No facility-scoped (as opposed to institution-scoped) staff role exists yet — `requireFacilityAccess` is implemented and unit-tested, but no route currently calls it, since only `INSTITUTION_ADMIN` performs these actions in this build.
+
+---
+
+## 2026-07-17 — User dashboard (`/dashboard` and sub-routes)
+
+### Expected Behavior
+
+An authenticated dashboard showing a user's own intake summary, research status, a timeline built only from facts they actually provided, unresolved information, roadmap status/progress, relevant legal terms, recommended resources, sanitized recent activity, disclaimers, and a shared-device "Clear My Session" control. Strict per-user ownership throughout: institution staff get no automatic access to private research, and another user's resource resolves to `not-found`, never `forbidden`.
+
+### Security Reason
+
+This phase is the first place intake/roadmap data is surfaced back to the user themselves in an ongoing, browsable way (rather than a one-shot confirmation screen), so the ownership boundary matters more than anywhere else so far — a leak here would expose another person's legal situation, not just account metadata. It also introduces the first genuinely shared-device-relevant UI control (Clear My Session), so the client-storage-clearing behavior needed the same "never let a network failure block the privacy action" discipline already established for other security-sensitive flows.
+
+### Tests Added (all red before implementation)
+
+- `tests/integration/authorization/dashboard-authorization.test.ts` — dashboard access, owned-intake/roadmap/saved-item checks
+- `tests/unit/dashboard/research-status.test.ts`, `timeline-mapper.test.ts`, `resource-recommendations.test.ts`, `dashboard-schema.test.ts`
+- `tests/integration/dashboard/legal-terms-for-intake.test.ts`, `get-dashboard-overview.test.ts`, `get-user-intakes.test.ts`, `get-user-roadmaps.test.ts`, `get-user-activity.test.ts`, `get-user-saved-items.test.ts`, `get-intake-detail.test.ts`, `get-roadmap-detail.test.ts`
+- `tests/integration/activity/record-user-activity.test.ts`
+- `tests/unit/roadmap/roadmap-schema.test.ts`, `generate-roadmap.test.ts`, `roadmap-progress-schema.test.ts`
+- `tests/integration/roadmap/create-roadmap-from-intake.test.ts`, `update-roadmap-progress.test.ts`
+- `tests/unit/saved/saved-resource-schema.test.ts`; `tests/integration/saved/save-resource.test.ts`, `remove-saved-resource.test.ts`
+- `tests/unit/client/user-scoped-storage.test.ts`
+- `tests/integration/dashboard/roadmap-generate-route.test.ts`, `roadmap-progress-route.test.ts`, `saved-resources-route.test.ts`, `clear-session-route.test.ts`
+- `tests/components/dashboard/clear-session-button.test.tsx`, `dashboard-mobile-nav.test.tsx`, `generate-roadmap-button.test.tsx`, `remove-saved-item-button.test.tsx`; `tests/components/roadmap/roadmap-step-card.test.tsx`
+- `tests/components/onboarding/get-started-page.test.tsx` — added the signed-in "Go to Dashboard" redirect case alongside the existing guest "Return to Home" case
+
+### Implementation
+
+Schema: added `RoadmapStepStatus`/`SavedResourceType`/`UserActivityType` enums, `User.preferences` (non-sensitive UI prefs only, never an authorization control), and three new models — `RoadmapProgress` (`@@unique([userId, roadmapId, stepId])`), `SavedResource` (`@@unique([userId, resourceType, resourceKey])`), `UserActivity` — via the same non-interactive `prisma migrate diff` → hand-placed `migration.sql` → `prisma migrate deploy` workflow used throughout this project (migration `20260717151018_user_dashboard`).
+
+Services created (one file per concern, matching the existing `lib/institution/`/`lib/intake/` convention): `lib/auth/dashboard-authorization.ts`; `lib/dashboard/{research-status,timeline-mapper,resource-recommendations,legal-terms-for-intake,get-dashboard-overview,get-user-intakes,get-user-roadmaps,get-user-activity,get-user-saved-items,get-intake-detail,get-roadmap-detail,dashboard-schema,research-status-labels,dashboard-nav-items}.ts`; `lib/activity/{approved-activity-events,record-user-activity}.ts`; `lib/roadmap/{roadmap-schema,roadmap-step-templates,generate-roadmap,roadmap-progress-schema,roadmap-step-status,update-roadmap-progress,create-roadmap-from-intake,roadmap-generate-request-schema}.ts`; `lib/saved/{saved-resource-schema,save-resource,remove-saved-resource}.ts`; `lib/client/user-scoped-storage.ts`. API routes: `app/api/dashboard/{roadmap/generate,roadmap-progress/[roadmapId],saved-resources,saved-resources/[savedItemId],clear-session}/route.ts`. UI: `app/dashboard/{layout,page}.tsx` and `intakes/[intakeId]`, `roadmaps/[roadmapId]`, `research`, `saved`, `settings` pages; `components/dashboard/*` (shell, sidebar, mobile nav, all overview section components, clear-session/generate-roadmap/remove-saved-item buttons); `components/roadmap/roadmap-step-card.tsx`.
+
+Reuse-over-duplication decisions made throughout, each because the alternative would have meant a second source of truth for something already correct: activity metadata redaction reuses `redact()` from `lib/security/safe-logger.ts` (same as `recordAuditEvent`); resource recommendations reuse `resourcesRegistry` from `lib/resources-data.ts`; legal term lookups reuse `lookupLegalTerm` from `lib/legal-sources/legal-term-service.ts`; the deterministic roadmap generator's `relatedTerms`/`legalTerms` only ever reference real `curatedGlossary` entries (cross-referenced by a test); the dashboard disclaimer reuses `RESOURCE_DISCLAIMER` from `lib/resources-constants.ts` instead of restating it; the mobile nav pattern (hamburger + `framer-motion` `AnimatePresence`) mirrors `components/site/navbar.tsx`'s existing implementation rather than introducing a new primitive.
+
+`proxy.ts` gained `/dashboard(.*)` in its coarse route matcher, but per the project's standing invariant (#7/#8) this is not treated as sufficient — `app/dashboard/layout.tsx` and every individual page independently call `requireDashboardAccess()`/re-check ownership.
+
+Fixed one pre-existing test flake discovered while re-running the full suite mid-phase: `tests/integration/intake/start-intake-session.test.ts`'s "provider-unavailable" test built its unique-fixture jurisdiction string as `` `SC-provider-fail-${Date.now()}-${Math.random()}` `` — `Math.random()`'s string length varies and could occasionally push the combined string past the `jurisdiction` field's 50-character Zod max, tripping `invalid-request` instead of exercising the intended provider-failure path. Fixed by switching to a shorter base36-encoded unique suffix. Also fixed several misplaced/unnecessary `@ts-expect-error` directives in `record-user-activity.test.ts` caught by `tsc --noEmit` (a `@ts-expect-error` only suppresses the error on the literal next line — three of the four occurrences were either on the wrong line or unnecessary because the flagged value was actually valid for the declared type).
+
+### Verification
+
+- `npx vitest run` (full suite, run repeatedly at each checkpoint through the build): all files/tests passing throughout; final count captured in the completion report
+- `npx tsc --noEmit`: clean at every checkpoint
+- Manual `npm run dev` walkthrough of the dashboard (overview → intake detail → roadmap detail with step-status toggling → research history → saved with remove → settings with Clear My Session) — see the final completion report for the specific result
+
+### Known Limitations
+
+- No AI roadmap provider is configured (none has been throughout this project) — `createRoadmapFromIntake` always produces a `DETERMINISTIC_FALLBACK` roadmap, `confidence.level: "low"`. This is the same, already-documented limitation from `docs/behavior/roadmap-generation.md`, not a new one.
+- The dashboard has no pagination for intake/roadmap/activity/saved-item lists — acceptable at this stage given expected per-user volume, but worth revisiting if a single user accumulates a very large history.
+- `User.preferences` (Json, added this phase) has no reader/writer service yet — it exists in the schema for a future non-sensitive-preferences feature (e.g. reduced motion) but nothing currently sets or reads it. Documented rather than silently unused.
+- Editing a saved item's note/metadata after creation isn't supported — only save/remove. A user can achieve the same effect by removing and re-saving.
+
+---
+
+## 2026-07-19 — Dashboard navigation/logout/intake-resume overhaul + verified case search
+
+### Expected Behavior
+
+Consistent authenticated navigation (Dashboard, My Intake, My Roadmap, Research, Saved, Resources, Log Out) across the dashboard and intake flow; an auth-aware homepage header CTA; a real server-side intake Save & Exit / resume flow (no more wizard dead-ends); a direct redirect from intake confirmation into the newly generated roadmap; and a new verified-case-search subsystem (CourtListener-backed, retrieval-only) with saved cases and a restricted, role-aware settings page for institution-managed users.
+
+### Security Reason
+
+Two new categories of risk enter here: (1) a second real-money-equivalent trust boundary — the case-search jurisdiction must always come from the roadmap the user owns, never a client-supplied override, or a user could effectively query cases outside their own roadmap's scope; and (2) the settings page now embeds Clerk's own account-management UI for individual users, which makes the role check deciding whether to show it (`role === "INDIVIDUAL"`, server-derived) a genuine authorization boundary, not just a UI nicety — an institution-managed account must never see self-service credential controls that don't apply to a username-based account.
+
+### Tests Added (all red before implementation)
+
+- `tests/integration/dashboard/homepage-nav-state.test.ts`, `tests/unit/dashboard/dashboard-nav-items.test.ts`, `tests/integration/dashboard/get-dashboard-nav-context.test.ts`, `tests/unit/auth/post-logout-redirect.test.ts`
+- `tests/components/dashboard/log-out-button.test.tsx`, `dashboard-mobile-nav.test.tsx` (updated), `tests/components/site/navbar.test.tsx`
+- `tests/unit/intake/use-intake-store.test.ts` (`hydrateFromSession`), `tests/components/onboarding/intake-nav-bar.test.tsx`, `get-started-page.test.tsx` (rewritten: resume, Save & Exit, roadmap-generation redirect, roadmap-generation-failure recovery)
+- `tests/components/roadmap/roadmap-step-card.test.tsx` (note + related-term links)
+- `tests/unit/case-search/case-search-schema.test.ts`, `relevance-summary.test.ts`, `courtlistener-provider.test.ts`, `case-search-service.test.ts`, `build-roadmap-case-request.test.ts`
+- `tests/integration/authorization/dashboard-authorization.test.ts` (`requireOwnedSavedCase`), `tests/integration/saved/save-case.test.ts`, `remove-saved-case.test.ts`, `update-saved-case-note.test.ts`, `tests/integration/dashboard/get-user-saved-cases.test.ts`, `get-dashboard-cases-preview.test.ts`
+- `tests/integration/case-search/roadmap-cases-route.test.ts`, `case-detail-route.test.ts`, `saved-cases-route.test.ts`
+- `tests/components/roadmap/case-result-card.test.tsx`, `cases-to-research.test.tsx`; `tests/components/dashboard/remove-saved-case-button.test.tsx`
+- `tests/integration/dashboard/update-user-preferences.test.ts`, `preferences-route.test.ts`, `tests/components/dashboard/preferences-form.test.tsx`
+- `tests/integration/authorization/cross-role-cross-user-regression.test.ts`
+
+### Implementation
+
+**Navigation/logout/homepage**: `lib/dashboard/homepage-nav-state.ts` reuses `getDashboardOverview` rather than recomputing research status — the homepage and dashboard can never disagree. `lib/dashboard/dashboard-nav-items.ts` became a function of a small `DashboardNavContext` (`latestIntakeId`/`latestRoadmapId`, from the new `get-dashboard-nav-context.ts`) threaded from `app/dashboard/layout.tsx` down through `DashboardShell`/`DashboardSidebar`/`DashboardMobileNav`. `components/dashboard/log-out-button.tsx` is a plain sign-out (reuses `clearAllLocalSessionData()` but skips the confirm step `ClearSessionButton` needs) with `postLogoutRedirectFor(role)` (`lib/auth/post-logout-redirect.ts`) sending individual users to `/` and everyone else to `/institution/login`.
+
+**Intake resume**: added `hydrateFromSession` to `stores/use-intake-store.ts` — restores Layer-1 answers, `sessionId`, AI state, and `answeredTurns` from the existing `GET /api/intake/interview/[sessionId]` response (no new backend needed — that endpoint already returned everything required), and picks the resume-target `step` from the session's status. `app/get-started/page.tsx` now reads `?sessionId=` via `useSearchParams` (wrapped in `<Suspense>`, matching the existing `GlossarySearch` convention) and calls this on mount. `components/onboarding/intake-nav-bar.tsx` (Save & Exit / Return to Dashboard / Log Out) renders only for signed-in users — guests keep the unchanged existing flow. Save & Exit does not call the server at all when a session already exists (everything is already persisted incrementally by the existing answer-submission flow) — it just redirects to `/dashboard?saved=intake`, which shows a "Your intake progress has been saved" banner.
+
+**Confirm → roadmap redirect**: `handleConfirm` in `get-started/page.tsx` now calls `POST /api/dashboard/roadmap/generate` immediately after a signed-in user's intake is confirmed, and `router.push`es straight to `/dashboard/roadmaps/[roadmapId]` on success (`store.reset()` first, since both intake and roadmap are now fully server-persisted). On roadmap-generation failure, the intake stays confirmed and untouched — a dedicated recovery card (message + Try Again + Return to Dashboard) replaces the old unconditional "You're ready" screen, which now only ever renders for guests (who have no roadmap-generation path).
+
+**Verified case search** (`lib/case-search/`, new directory mirroring `lib/legal-sources/`): `types.ts` (`CaseSourceProvider`, `CaseSearchProviderResult` mirroring `IntakeInterviewResult`'s full-union pattern since this is a real network provider), `courtlistener-provider.ts` (real implementation, gated behind `COURTLISTENER_API_TOKEN`, **unverified against a live account**), `case-search-service.ts` (config check → cache → provider → safe-error mapping), `case-search-schema.ts`, `cache.ts` (15-minute in-memory, keyed by search params only, never user-specific), `build-roadmap-case-request.ts` (jurisdiction structurally always server-derived — the override parameter type excludes it). New Prisma model `SavedCase` (migration `20260717153001_saved_cases`, plus a `CASE_SAVED` `UserActivityType` enum value — remembered to add it to `lib/activity/approved-activity-events.ts`'s allowlist too, which is the actual runtime gate, not just the Prisma enum). API routes: `GET/POST /api/roadmaps/[roadmapId]/cases(/search)`, `GET /api/cases/[caseId]`, `GET/POST /api/saved-cases`, `DELETE/PATCH /api/saved-cases/[savedCaseId]`. UI: `components/roadmap/case-result-card.tsx` + `cases-to-research.tsx` (loading/unavailable/error states, "Find Additional Cases" structured filters — court level, date-after, published-only, no free-text/chat input), a compact `VerifiedCasesPreview` on the dashboard overview, and a "Saved Cases" section on `/dashboard/saved`.
+
+**Restricted settings**: `app/dashboard/settings/page.tsx` now embeds Clerk's `<UserProfile routing="hash" />` only for `role === "INDIVIDUAL"`; every other role sees the two required fixed messages instead. Added a minimal `User.preferences` reader/writer (`lib/dashboard/user-preferences-schema.ts`, `update-user-preferences.ts`, `PATCH /api/dashboard/preferences`, `components/dashboard/preferences-form.tsx`) — closing the "no reader/writer yet" known limitation from the previous phase's report, scoped to just `reducedMotion`/`textSize` as the task specified.
+
+**Authorization hardening**: added `requireOwnedSavedCase` (`lib/auth/dashboard-authorization.ts`), and one consolidated regression test file (`cross-role-cross-user-regression.test.ts`) proving an institution-managed user gets 403 from `/api/institution/users` and 404 (never another user's data) when manipulating a roadmap or saved-case id in the URL. All three regression assertions passed against the existing authorization architecture without needing any fixes — confirming the ownership-check pattern established in earlier phases already generalizes correctly to the new resources.
+
+### Verification
+
+- `npx vitest run` (full suite, run repeatedly at each checkpoint through the build): all files/tests passing throughout; final count in the completion report
+- `npx tsc --noEmit`: clean at every checkpoint
+- `npx eslint .`: clean (one `react-hooks/set-state-in-effect` error caught and fixed in the resume effect, using the same deferred-`Promise.resolve().then()` pattern already established in `components/institution/user-management.tsx`)
+- `npx prisma migrate deploy` / `migrate status`: `20260717153001_saved_cases` applied cleanly, schema up to date
+
+### Known Limitations
+
+- CourtListener is the only implemented provider, and its field mapping is unverified against a live account (no `COURTLISTENER_API_TOKEN` configured in this environment) — the abstraction is designed to support additional providers without service/UI changes, but only one is real today.
+- No later-history/citator integration — every case's `laterHistoryStatus` is `"not-checked"`, with the required disclosure notice shown in the UI.
+- Save & Exit during Layer 1 (before the AI interview has started, i.e. no `IntakeSession` row exists yet) has nothing to persist server-side — it just navigates away; guest-style local Zustand persistence (if the deployment enables it) is the only fallback, same as before this phase.
+- The intake-flow `LogOutButton` always redirects to `/` rather than being role-aware like the dashboard's — Clerk's client hooks don't expose the Prisma-derived role, and adding a role-fetch just for this one button's redirect target wasn't judged worth the complexity. A minor UX nit for institution-managed users logging out mid-intake, not a security or data issue.
+- `/institution/settings` still doesn't exist as a page — only pre-emptively added to `proxy.ts`'s matcher, since the task didn't specify what should be on it.

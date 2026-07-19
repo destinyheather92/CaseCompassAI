@@ -120,7 +120,11 @@ describe("startIntakeSession", () => {
   it("returns a safe provider-unavailable result (not a raw error) and creates no session when the AI call fails", async () => {
     // Unique jurisdiction value so this assertion can't collide with
     // fixtures created concurrently by other test files sharing the DB.
-    const uniqueInput = { ...validInput, jurisdiction: `SC-provider-fail-${Date.now()}-${Math.random()}` };
+    // Kept short (base36) to stay well under the field's 50-char max.
+    const uniqueInput = {
+      ...validInput,
+      jurisdiction: `SC-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    };
     const provider = createStaticInterviewerProvider({ status: "provider-error", message: "boom" });
     const result = await startIntakeSession(
       uniqueInput,

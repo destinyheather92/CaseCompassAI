@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { buttonVariants } from "@/components/ui/button";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { useIntakeStore } from "@/stores/use-intake-store";
 import { WelcomeStep } from "@/components/onboarding/welcome-step";
 import { SingleChoiceStep } from "@/components/onboarding/single-choice-step";
@@ -12,6 +14,7 @@ import { AdaptiveQuestion } from "@/components/onboarding/adaptive-question";
 import { IntakeLoading } from "@/components/onboarding/intake-loading";
 import { IntakeRecovery } from "@/components/onboarding/intake-recovery";
 import { IntakeReview } from "@/components/onboarding/intake-review";
+import { IntakeNavBar } from "@/components/onboarding/intake-nav-bar";
 import {
   CASE_TYPE_OPTIONS,
   PROCEDURAL_STAGE_OPTIONS,
@@ -28,6 +31,9 @@ const SAFE_START_ERROR =
 const SAFE_ANSWER_ERROR =
   "CaseCompass could not prepare the next question right now. Your answer is saved, so you can try again.";
 const SAFE_COMPLETE_ERROR = "CaseCompass could not save your confirmation right now. Please try again.";
+const SAFE_ROADMAP_ERROR =
+  "CaseCompass could not build your roadmap right now. Your intake was saved, so you can try again.";
+const SAFE_RESUME_ERROR = "CaseCompass could not load your saved intake right now.";
 
 async function postJson(url: string, body: unknown) {
   const response = await fetch(url, {
@@ -38,12 +44,52 @@ async function postJson(url: string, body: unknown) {
   return response.json();
 }
 
-export default function GetStartedPage() {
+function GetStartedContent() {
+  const { isSignedIn } = useAuth();
   const store = useIntakeStore();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const resumeSessionId = searchParams.get("sessionId");
+
   const [loading, setLoading] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [roadmapError, setRoadmapError] = useState<string | null>(null);
 
   const hasSavedProgress = store.step !== "welcome" && store.step !== "complete";
+
+  useEffect(() => {
+    if (!resumeSessionId || store.sessionId === resumeSessionId) return;
+    let cancelled = false;
+    // Defer past the synchronous portion (setResuming/setError) so the
+    // effect body itself never triggers a setState synchronously during
+    // commit — same pattern as components/institution/user-management.tsx.
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      setResuming(true);
+      setError(null);
+      fetch(`/api/intake/interview/${resumeSessionId}`)
+        .then((response) => response.json())
+        .then((body) => {
+          if (cancelled) return;
+          if (body.status !== "found") {
+            setError(body.message ?? SAFE_RESUME_ERROR);
+            return;
+          }
+          store.hydrateFromSession(body.session);
+        })
+        .catch(() => {
+          if (!cancelled) setError(SAFE_RESUME_ERROR);
+        })
+        .finally(() => {
+          if (!cancelled) setResuming(false);
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeSessionId]);
 
   async function handleStartInterview() {
     setLoading(true);
@@ -96,6 +142,24 @@ export default function GetStartedPage() {
     }
   }
 
+  /** Attempts roadmap generation for an already-confirmed intake. On failure the intake stays confirmed and saved — never reset. */
+  async function generateRoadmap(intakeId: string) {
+    setRoadmapError(null);
+    let body: { status?: string; roadmapId?: string; message?: string };
+    try {
+      body = await postJson("/api/dashboard/roadmap/generate", { intakeId });
+    } catch {
+      body = { status: "network-error" };
+    }
+    if (body.status !== "created" || !body.roadmapId) {
+      setRoadmapError(body.message ?? SAFE_ROADMAP_ERROR);
+      store.goToStep("complete");
+      return;
+    }
+    store.reset();
+    router.push(`/dashboard/roadmaps/${body.roadmapId}`);
+  }
+
   async function handleConfirm() {
     if (!store.sessionId) return;
     setLoading(true);
@@ -108,12 +172,35 @@ export default function GetStartedPage() {
         setError(body.message ?? SAFE_COMPLETE_ERROR);
         return;
       }
-      store.goToStep("complete");
+      if (isSignedIn) {
+        await generateRoadmap(store.sessionId);
+      } else {
+        store.goToStep("complete");
+      }
     } catch {
       setError(SAFE_COMPLETE_ERROR);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleRetryRoadmap() {
+    if (!store.sessionId) return;
+    setLoading(true);
+    try {
+      await generateRoadmap(store.sessionId);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /** Never marks the intake complete or generates a roadmap — just leaves the wizard without losing anything already saved server-side. */
+  function handleSaveAndExit() {
+    if (!isSignedIn) {
+      router.push("/");
+      return;
+    }
+    router.push(store.sessionId ? "/dashboard?saved=intake" : "/dashboard");
   }
 
   function retry() {
@@ -127,9 +214,11 @@ export default function GetStartedPage() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-cc-bg px-6 py-16">
+      <IntakeNavBar isSignedIn={Boolean(isSignedIn)} onSaveAndExit={handleSaveAndExit} />
+
       {error ? (
         <IntakeRecovery message={error} onRetry={retry} onReview={reviewInstead} />
-      ) : loading ? (
+      ) : loading || resuming ? (
         <IntakeLoading />
       ) : (
         <>
@@ -216,24 +305,48 @@ export default function GetStartedPage() {
             />
           )}
 
-          {store.step === "complete" && (
-            <div className="glass-card flex w-full max-w-lg flex-col gap-4 rounded-2xl p-8 text-center">
-              <h2 className="text-2xl font-bold text-cc-text">You&apos;re ready.</h2>
-              <p className="text-cc-muted">
-                CaseCompass has everything it needs to prepare your research roadmap. This confirmation is saved to
-                your account.
-              </p>
-              <Link
-                href="/"
-                onClick={() => store.reset()}
-                className={buttonVariants({ variant: "default", className: "self-center" })}
-              >
-                Return to Home
-              </Link>
-            </div>
-          )}
+          {store.step === "complete" &&
+            (roadmapError ? (
+              <div className="glass-card flex w-full max-w-lg flex-col gap-4 rounded-2xl p-8 text-center">
+                <h2 className="text-2xl font-bold text-cc-text">Your intake is saved.</h2>
+                <p role="alert" className="text-cc-muted">
+                  {roadmapError}
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
+                  <Button type="button" onClick={handleRetryRoadmap} disabled={loading}>
+                    Try Again
+                  </Button>
+                  <Link href="/dashboard" className={buttonVariants({ variant: "outline" })}>
+                    Return to Dashboard
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div className="glass-card flex w-full max-w-lg flex-col gap-4 rounded-2xl p-8 text-center">
+                <h2 className="text-2xl font-bold text-cc-text">You&apos;re ready.</h2>
+                <p className="text-cc-muted">
+                  CaseCompass has everything it needs to prepare your research roadmap. This confirmation is saved to
+                  your account.
+                </p>
+                <Link
+                  href="/"
+                  onClick={() => store.reset()}
+                  className={buttonVariants({ variant: "default", className: "self-center" })}
+                >
+                  Return to Home
+                </Link>
+              </div>
+            ))}
         </>
       )}
     </div>
+  );
+}
+
+export default function GetStartedPage() {
+  return (
+    <Suspense fallback={<IntakeLoading />}>
+      <GetStartedContent />
+    </Suspense>
   );
 }

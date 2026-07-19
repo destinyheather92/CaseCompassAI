@@ -13,6 +13,10 @@ const isProtectedRoute = createRouteMatcher([
   "/first-login",
   "/institution/dashboard(.*)",
   "/institution/users(.*)",
+  // No /institution/settings page exists yet — matched preemptively so
+  // this gate doesn't need to be remembered if/when one is added.
+  "/institution/settings(.*)",
+  "/dashboard(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

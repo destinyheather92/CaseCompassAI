@@ -10,6 +10,11 @@ const serverEnvSchema = z.object({
    */
   OPENAI_INTAKE_MODEL: z.string().min(1).default("gpt-5.6-luna"),
   INTAKE_MAX_AI_QUESTIONS: z.coerce.number().int().min(1).max(50).default(12),
+
+  /** "none" (default) means no verified case-search provider is configured — see lib/case-search/. */
+  CASE_SEARCH_PROVIDER: z.enum(["courtlistener", "none"]).default("none"),
+  COURTLISTENER_API_TOKEN: z.string().min(1).optional(),
+  CASE_SEARCH_RESULT_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

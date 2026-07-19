@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const ENV_KEYS = ["OPENAI_API_KEY", "OPENAI_INTAKE_MODEL", "INTAKE_MAX_AI_QUESTIONS"] as const;
+const ENV_KEYS = [
+  "OPENAI_API_KEY",
+  "OPENAI_INTAKE_MODEL",
+  "INTAKE_MAX_AI_QUESTIONS",
+  "CASE_SEARCH_PROVIDER",
+  "COURTLISTENER_API_TOKEN",
+  "CASE_SEARCH_RESULT_LIMIT",
+] as const;
 const originalValues: Record<string, string | undefined> = {};
 
 async function freshEnvModule() {
@@ -76,5 +83,32 @@ describe("requireOpenAIApiKey", () => {
     process.env.OPENAI_API_KEY = "sk-test-key-value";
     const { requireOpenAIApiKey } = await freshEnvModule();
     expect(requireOpenAIApiKey()).toBe("sk-test-key-value");
+  });
+});
+
+describe("case search environment", () => {
+  it("defaults CASE_SEARCH_PROVIDER to none when unset", async () => {
+    delete process.env.CASE_SEARCH_PROVIDER;
+    const { getServerEnv } = await freshEnvModule();
+    expect(getServerEnv().CASE_SEARCH_PROVIDER).toBe("none");
+  });
+
+  it("rejects an unrecognized CASE_SEARCH_PROVIDER value", async () => {
+    process.env.CASE_SEARCH_PROVIDER = "not-a-real-provider";
+    const { getServerEnv } = await freshEnvModule();
+    expect(() => getServerEnv()).toThrow();
+  });
+
+  it("defaults CASE_SEARCH_RESULT_LIMIT to 10 when unset", async () => {
+    delete process.env.CASE_SEARCH_RESULT_LIMIT;
+    const { getServerEnv } = await freshEnvModule();
+    expect(getServerEnv().CASE_SEARCH_RESULT_LIMIT).toBe(10);
+  });
+
+  it("does not throw when COURTLISTENER_API_TOKEN is unset", async () => {
+    delete process.env.COURTLISTENER_API_TOKEN;
+    const { getServerEnv } = await freshEnvModule();
+    expect(() => getServerEnv()).not.toThrow();
+    expect(getServerEnv().COURTLISTENER_API_TOKEN).toBeUndefined();
   });
 });
