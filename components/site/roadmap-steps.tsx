@@ -21,19 +21,6 @@ export function RoadmapSteps() {
         </div>
 
         <div className="relative mt-16">
-          <div
-            className="pointer-events-none absolute top-11 right-[10%] left-[10%] hidden h-px lg:block"
-            style={{
-              backgroundImage:
-                "linear-gradient(90deg, #8B5CF6 0%, #A855F7 45%, #22D3EE 100%)",
-              backgroundSize: "16px 1px",
-              backgroundRepeat: "repeat-x",
-              maskImage:
-                "repeating-linear-gradient(90deg, black 0, black 8px, transparent 8px, transparent 16px)",
-            }}
-            aria-hidden="true"
-          />
-
           <ol className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-5 lg:gap-5">
             {roadmapCards.map((card, i) => {
               const Icon = card.icon;

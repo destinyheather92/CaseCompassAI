@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireAuthenticatedUser } from "@/lib/auth/authorization";
 import { authorizationFailureResponse } from "@/lib/auth/authorization-http";
+import { INSTITUTION_MANAGEMENT_ROLES } from "@/lib/auth/institution-permissions";
 import { institutionUserCreateSchema } from "@/lib/institution/institution-schema";
 import { createInstitutionUser } from "@/lib/institution/create-user";
 import { listInstitutionUsers } from "@/lib/institution/list-users";
@@ -20,10 +21,11 @@ const VALID_STATUSES = new Set<AccountStatus>([
   "LOCKED",
   "PENDING_FIRST_LOGIN",
   "TEMPORARY_PASSWORD_EXPIRED",
+  "ARCHIVED",
 ]);
 
 export async function GET(request: NextRequest) {
-  const authResult = await requireAuthenticatedUser({ roles: ["INSTITUTION_ADMIN"] });
+  const authResult = await requireAuthenticatedUser({ roles: INSTITUTION_MANAGEMENT_ROLES });
   if (!authResult.ok) {
     const failure = authorizationFailureResponse(authResult.reason);
     return NextResponse.json(failure.body, { status: failure.status });
@@ -46,6 +48,7 @@ export async function GET(request: NextRequest) {
     facilityId: params.get("facilityId") ?? undefined,
     role: roleParam && VALID_ROLES.has(roleParam as UserRole) ? (roleParam as UserRole) : undefined,
     status: statusParam && VALID_STATUSES.has(statusParam as AccountStatus) ? (statusParam as AccountStatus) : undefined,
+    housingUnit: params.get("housingUnit") ?? undefined,
     search: params.get("search") ?? undefined,
     page: params.has("page") ? Number(params.get("page")) : undefined,
     pageSize: params.has("pageSize") ? Number(params.get("pageSize")) : undefined,
@@ -55,7 +58,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const authResult = await requireAuthenticatedUser({ roles: ["INSTITUTION_ADMIN"] });
+  const authResult = await requireAuthenticatedUser({ roles: INSTITUTION_MANAGEMENT_ROLES });
   if (!authResult.ok) {
     const failure = authorizationFailureResponse(authResult.reason);
     return NextResponse.json(failure.body, { status: failure.status });
@@ -101,6 +104,10 @@ export async function POST(request: NextRequest) {
     role: parsed.data.role,
     username: parsed.data.username,
     displayName: parsed.data.displayName,
+    firstName: parsed.data.firstName,
+    lastName: parsed.data.lastName,
+    docNumber: parsed.data.docNumber,
+    housingUnit: parsed.data.housingUnit,
     facilityId: parsed.data.facilityId,
     internalIdentifier: parsed.data.internalIdentifier,
   });

@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
+import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useIntakeStore } from "@/stores/use-intake-store";
 import { WelcomeStep } from "@/components/onboarding/welcome-step";
@@ -15,6 +16,7 @@ import { IntakeLoading } from "@/components/onboarding/intake-loading";
 import { IntakeRecovery } from "@/components/onboarding/intake-recovery";
 import { IntakeReview } from "@/components/onboarding/intake-review";
 import { IntakeNavBar } from "@/components/onboarding/intake-nav-bar";
+import { IntakeShell } from "@/components/onboarding/intake-shell";
 import {
   CASE_TYPE_OPTIONS,
   PROCEDURAL_STAGE_OPTIONS,
@@ -23,6 +25,7 @@ import {
   caseTypeLabel,
   proceduralStageLabel,
 } from "@/lib/intake-options-data";
+import { CASE_TYPE_ICONS, PROCEDURAL_STAGE_ICONS, RESEARCH_GOAL_ICONS, DOCUMENT_TYPE_ICONS } from "@/lib/intake-option-icons";
 import { JURISDICTION_OPTIONS } from "@/lib/jurisdictions-data";
 import type { CaseType, DocumentType, ProceduralStage, ResearchGoal } from "@/types/intake";
 
@@ -42,6 +45,18 @@ async function postJson(url: string, body: unknown) {
     body: JSON.stringify(body),
   });
   return response.json();
+}
+
+/**
+ * `must-change-password` can only ever come back for an institution-managed
+ * account — individual accounts are always created with
+ * `mustChangePassword: false` (see lib/auth/sync-clerk-user.ts) and have no
+ * path that sets it true. So redirecting on this status can never affect a
+ * regular individual user; it only ever fires for the population it's
+ * meant for.
+ */
+function isMustChangePassword(body: { status?: string }): boolean {
+  return body?.status === "must-change-password";
 }
 
 function GetStartedContent() {
@@ -72,6 +87,10 @@ function GetStartedContent() {
         .then((response) => response.json())
         .then((body) => {
           if (cancelled) return;
+          if (isMustChangePassword(body)) {
+            router.push("/first-login");
+            return;
+          }
           if (body.status !== "found") {
             setError(body.message ?? SAFE_RESUME_ERROR);
             return;
@@ -102,6 +121,10 @@ function GetStartedContent() {
         researchGoals: store.researchGoals,
         documentTypes: store.documentTypes,
       });
+      if (isMustChangePassword(body)) {
+        router.push("/first-login");
+        return;
+      }
       if (body.status !== "started") {
         setError(body.message ?? SAFE_START_ERROR);
         return;
@@ -126,6 +149,10 @@ function GetStartedContent() {
         questionId: question.id,
         answerText,
       });
+      if (isMustChangePassword(body)) {
+        router.push("/first-login");
+        return;
+      }
       if (body.status !== "answered") {
         setError(body.message ?? SAFE_ANSWER_ERROR);
         return;
@@ -151,6 +178,10 @@ function GetStartedContent() {
     } catch {
       body = { status: "network-error" };
     }
+    if (isMustChangePassword(body)) {
+      router.push("/first-login");
+      return;
+    }
     if (body.status !== "created" || !body.roadmapId) {
       setRoadmapError(body.message ?? SAFE_ROADMAP_ERROR);
       store.goToStep("complete");
@@ -168,6 +199,10 @@ function GetStartedContent() {
       const body = await postJson(`/api/intake/interview/${store.sessionId}/complete`, {
         acknowledged: store.acknowledged,
       });
+      if (isMustChangePassword(body)) {
+        router.push("/first-login");
+        return;
+      }
       if (body.status !== "completed") {
         setError(body.message ?? SAFE_COMPLETE_ERROR);
         return;
@@ -213,9 +248,7 @@ function GetStartedContent() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-cc-bg px-6 py-16">
-      <IntakeNavBar isSignedIn={Boolean(isSignedIn)} onSaveAndExit={handleSaveAndExit} />
-
+    <IntakeShell step={store.step} navBar={<IntakeNavBar isSignedIn={Boolean(isSignedIn)} onSaveAndExit={handleSaveAndExit} />}>
       {error ? (
         <IntakeRecovery message={error} onRetry={retry} onReview={reviewInstead} />
       ) : loading || resuming ? (
@@ -235,6 +268,7 @@ function GetStartedContent() {
             <SingleChoiceStep
               heading="What best describes your situation?"
               options={CASE_TYPE_OPTIONS}
+              icons={CASE_TYPE_ICONS}
               selected={store.caseType}
               onSelect={(value) => store.setCaseType(value as CaseType)}
               onBack={() => store.goToStep("welcome")}
@@ -255,6 +289,7 @@ function GetStartedContent() {
             <SingleChoiceStep
               heading="Where is your case in the process?"
               options={PROCEDURAL_STAGE_OPTIONS}
+              icons={PROCEDURAL_STAGE_ICONS}
               selected={store.proceduralStage}
               onSelect={(value) => store.setProceduralStage(value as ProceduralStage)}
               onBack={() => store.goToStep("jurisdiction")}
@@ -266,6 +301,7 @@ function GetStartedContent() {
             <MultiChoiceStep
               heading="What are you hoping to understand?"
               options={RESEARCH_GOAL_OPTIONS}
+              icons={RESEARCH_GOAL_ICONS}
               selected={store.researchGoals}
               onToggle={(value) => store.toggleResearchGoal(value as ResearchGoal)}
               onBack={() => store.goToStep("procedural-stage")}
@@ -277,6 +313,7 @@ function GetStartedContent() {
             <MultiChoiceStep
               heading="Do you have any documents from your case?"
               options={DOCUMENT_TYPE_OPTIONS}
+              icons={DOCUMENT_TYPE_ICONS}
               selected={store.documentTypes}
               onToggle={(value) => store.toggleDocumentType(value as DocumentType)}
               onBack={() => store.goToStep("research-goals")}
@@ -307,7 +344,10 @@ function GetStartedContent() {
 
           {store.step === "complete" &&
             (roadmapError ? (
-              <div className="glass-card flex w-full max-w-lg flex-col gap-4 rounded-2xl p-8 text-center">
+              <div className="glass-card flex w-full max-w-lg flex-col items-center gap-4 rounded-3xl p-8 text-center sm:p-10">
+                <span className="flex size-14 items-center justify-center rounded-full border border-amber-400/40 bg-amber-400/10">
+                  <AlertTriangle className="size-6 text-amber-400" aria-hidden="true" strokeWidth={1.75} />
+                </span>
                 <h2 className="text-2xl font-bold text-cc-text">Your intake is saved.</h2>
                 <p role="alert" className="text-cc-muted">
                   {roadmapError}
@@ -322,7 +362,10 @@ function GetStartedContent() {
                 </div>
               </div>
             ) : (
-              <div className="glass-card flex w-full max-w-lg flex-col gap-4 rounded-2xl p-8 text-center">
+              <div className="glass-card flex w-full max-w-lg flex-col items-center gap-4 rounded-3xl p-8 text-center sm:p-10">
+                <span className="flex size-14 items-center justify-center rounded-full border border-cc-teal/50 bg-gradient-to-br from-cc-teal/20 to-cc-purple/10 shadow-[0_0_30px_rgba(34,211,238,0.25)]">
+                  <CheckCircle2 className="size-6 text-cc-teal" aria-hidden="true" strokeWidth={1.75} />
+                </span>
                 <h2 className="text-2xl font-bold text-cc-text">You&apos;re ready.</h2>
                 <p className="text-cc-muted">
                   CaseCompass has everything it needs to prepare your research roadmap. This confirmation is saved to
@@ -339,7 +382,7 @@ function GetStartedContent() {
             ))}
         </>
       )}
-    </div>
+    </IntakeShell>
   );
 }
 

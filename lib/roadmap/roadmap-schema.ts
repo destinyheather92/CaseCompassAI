@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ROADMAP_STEP_CATEGORIES, ROADMAP_STEP_DIFFICULTIES, ROADMAP_STEP_PRIORITIES } from "@/lib/roadmap/roadmap-step-templates";
 
 export const RoadmapStepSchema = z.object({
   id: z.string().min(1).max(100),
@@ -8,6 +9,10 @@ export const RoadmapStepSchema = z.object({
   whyItMatters: z.string().min(1).max(1000),
   suggestedActions: z.array(z.string().min(1).max(300)).min(1).max(10),
   relatedTerms: z.array(z.string().min(1).max(100)).max(10),
+  category: z.enum(ROADMAP_STEP_CATEGORIES),
+  priority: z.enum(ROADMAP_STEP_PRIORITIES),
+  difficulty: z.enum(ROADMAP_STEP_DIFFICULTIES),
+  estimatedMinutes: z.number().int().min(1).max(180),
 });
 
 export const LegalTermPreviewSchema = z.object({

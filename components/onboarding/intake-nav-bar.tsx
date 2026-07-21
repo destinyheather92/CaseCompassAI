@@ -7,7 +7,8 @@ import { LogOutButton } from "@/components/dashboard/log-out-button";
 /**
  * Shown on every intake step for a signed-in user so the wizard never
  * traps them — guests keep the existing flow unchanged (there is no
- * dashboard/account for a guest to return to).
+ * dashboard/account for a guest to return to). Sits in IntakeShell's
+ * header row.
  */
 export function IntakeNavBar({
   isSignedIn,
@@ -19,7 +20,7 @@ export function IntakeNavBar({
   if (!isSignedIn) return null;
 
   return (
-    <div className="mb-4 flex w-full max-w-xl flex-wrap items-center justify-end gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       <Button type="button" variant="outline" size="sm" onClick={onSaveAndExit}>
         Save and Exit
       </Button>

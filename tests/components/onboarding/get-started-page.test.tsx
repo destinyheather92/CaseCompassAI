@@ -324,6 +324,45 @@ describe("GetStartedPage", () => {
     expect(screen.getByRole("button", { name: /^log out$/i })).toBeInTheDocument();
   });
 
+  it("redirects to /first-login instead of showing a dead-end error when starting the interview requires a password change first", async () => {
+    mockIsSignedIn = true;
+    const store = useIntakeStore.getState();
+    store.setCaseType("criminal");
+    store.setJurisdiction("SC");
+    store.setProceduralStage("post-conviction");
+    store.toggleResearchGoal("understand-case");
+    store.toggleDocumentType("court-opinion");
+    store.goToStep("document-types");
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({ status: "must-change-password", message: "You must change your password before continuing." }),
+    );
+
+    const user = userEvent.setup();
+    render(<GetStartedPage />);
+
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith("/first-login");
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("redirects to /first-login when resuming a session requires a password change first", async () => {
+    mockIsSignedIn = true;
+    mockSearchParams = new URLSearchParams("sessionId=s1");
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({ status: "must-change-password", message: "You must change your password before continuing." }),
+    );
+
+    render(<GetStartedPage />);
+
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith("/first-login");
+    });
+  });
+
   it("Save and Exit redirects to the dashboard without marking the intake complete", async () => {
     mockIsSignedIn = true;
     const store = useIntakeStore.getState();

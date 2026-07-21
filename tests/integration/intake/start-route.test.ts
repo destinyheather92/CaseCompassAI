@@ -91,11 +91,11 @@ describe("POST /api/intake/interview/start", () => {
     expect(startIntakeSession).toHaveBeenCalledWith(validInput, expect.objectContaining({ userId: user.id }));
   });
 
-  it("rejects a signed-in user who must still change their password, before calling the service", async () => {
+  it("rejects a signed-in institution-managed user who must still change their password, before calling the service", async () => {
     const user = await prisma.user.create({
       data: {
         clerkUserId: `clerk-intake-start-pending-${Date.now()}`,
-        role: "INDIVIDUAL",
+        role: "INCARCERATED_USER",
         accountStatus: "PENDING_FIRST_LOGIN",
         mustChangePassword: true,
       },
@@ -109,6 +109,46 @@ describe("POST /api/intake/interview/start", () => {
     expect(body.status).toBe("must-change-password");
     expect(startIntakeSession).not.toHaveBeenCalled();
   });
+
+  it("never blocks an individual user on mustChangePassword — that lifecycle is institution-only", async () => {
+    vi.mocked(startIntakeSession).mockResolvedValueOnce({
+      status: "started",
+      sessionId: "s3",
+      intakeStatus: "interviewing",
+      question: null,
+      factualSummary: "",
+      unresolvedInformation: [],
+      topicsCovered: [],
+      questionCount: 0,
+    });
+    const user = await prisma.user.create({
+      data: {
+        clerkUserId: `clerk-intake-start-individual-mcp-${Date.now()}`,
+        role: "INDIVIDUAL",
+        accountStatus: "ACTIVE",
+        mustChangePassword: true,
+      },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
+    const response = await POST(postRequest(validInput));
+    expect(response.status).not.toBe(403);
+    expect(startIntakeSession).toHaveBeenCalled();
+  });
+
+  it("rejects an institution admin — a legal roadmap belongs only to an individual or inmate user, never the institution's administrator", async () => {
+    const user = await prisma.user.create({
+      data: { clerkUserId: `clerk-intake-start-inst-admin-${Date.now()}`, role: "INSTITUTION_ADMIN", accountStatus: "ACTIVE" },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
+    const response = await POST(postRequest(validInput));
+    expect(response.status).toBe(403);
+    expect(startIntakeSession).not.toHaveBeenCalled();
+  });
+
 
   it("rejects a disabled signed-in user", async () => {
     const user = await prisma.user.create({

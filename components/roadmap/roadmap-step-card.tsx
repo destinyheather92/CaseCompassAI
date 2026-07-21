@@ -2,17 +2,34 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { Clock, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import type { RoadmapDetailStep } from "@/lib/dashboard/get-roadmap-detail";
-import type { RoadmapStepStatus } from "@/types/roadmap";
+import type { RoadmapStepStatus, RoadmapStepPriority, RoadmapStepDifficulty } from "@/types/roadmap";
 
 const STATUS_ORDER: RoadmapStepStatus[] = ["not-started", "in-progress", "completed"];
 const STATUS_LABELS: Record<RoadmapStepStatus, string> = {
   "not-started": "Not started",
   "in-progress": "In progress",
   completed: "Completed",
+};
+const PRIORITY_LABELS: Record<RoadmapStepPriority, string> = {
+  essential: "Essential",
+  recommended: "Recommended",
+  optional: "Optional",
+};
+const PRIORITY_VARIANTS: Record<RoadmapStepPriority, "default" | "secondary" | "outline"> = {
+  essential: "default",
+  recommended: "secondary",
+  optional: "outline",
+};
+const DIFFICULTY_LABELS: Record<RoadmapStepDifficulty, string> = {
+  beginner: "Beginner",
+  intermediate: "Intermediate",
+  advanced: "Advanced",
 };
 const SAFE_ERROR_MESSAGE = "Could not update this step right now.";
 const SAFE_NOTE_ERROR_MESSAGE = "Could not save your note right now.";
@@ -76,8 +93,26 @@ export function RoadmapStepCard({ roadmapId, step }: { roadmapId: string; step: 
 
   return (
     <div className="glass-card rounded-2xl p-6">
-      <p className="text-xs font-semibold tracking-wide text-cc-muted uppercase">Step {step.order}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold tracking-wide text-cc-muted uppercase">Step {step.order}</p>
+        {status === "completed" && (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-cc-teal">
+            <CheckCircle2 className="size-3.5" aria-hidden="true" />
+            Completed
+          </span>
+        )}
+      </div>
       <h3 className="mt-1 text-base font-bold text-cc-text">{step.title}</h3>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <Badge variant={PRIORITY_VARIANTS[step.priority]}>{PRIORITY_LABELS[step.priority]}</Badge>
+        <Badge variant="outline">{DIFFICULTY_LABELS[step.difficulty]}</Badge>
+        <span className="inline-flex items-center gap-1 text-xs text-cc-muted">
+          <Clock className="size-3" aria-hidden="true" />
+          {step.estimatedMinutes} min read
+        </span>
+      </div>
+
       <p className="mt-3 text-sm text-cc-muted">{step.description}</p>
       <p className="mt-2 text-xs text-cc-teal">{step.whyItMatters}</p>
 

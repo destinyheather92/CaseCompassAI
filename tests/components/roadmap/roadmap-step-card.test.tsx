@@ -20,6 +20,10 @@ const step = {
   whyItMatters: "This matters because...",
   suggestedActions: ["Talk to the clerk"],
   relatedTerms: [],
+  category: "procedural-steps" as const,
+  priority: "essential" as const,
+  difficulty: "intermediate" as const,
+  estimatedMinutes: 7,
   status: "not-started" as const,
   note: null,
 };
@@ -96,5 +100,24 @@ describe("RoadmapStepCard", () => {
     await user.click(screen.getByRole("button", { name: /save note/i }));
 
     expect(await screen.findByText(/note saved/i)).toBeInTheDocument();
+  });
+
+  it("shows priority, difficulty, and estimated reading time badges", () => {
+    render(<RoadmapStepCard roadmapId="r1" step={step} />);
+    expect(screen.getByText("Essential")).toBeInTheDocument();
+    expect(screen.getByText("Intermediate")).toBeInTheDocument();
+    expect(screen.getByText(/7 min read/i)).toBeInTheDocument();
+  });
+
+  it("shows a completed badge only when the step's status is completed", async () => {
+    // "Completed" also appears as one of the three status-toggle button
+    // labels regardless of status, so this counts matches rather than
+    // asserting absence/presence of the text itself.
+    const user = userEvent.setup();
+    render(<RoadmapStepCard roadmapId="r1" step={step} />);
+    expect(screen.getAllByText(/^completed$/i)).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: /^completed$/i }));
+    await waitFor(() => expect(screen.getAllByText(/^completed$/i)).toHaveLength(2));
   });
 });

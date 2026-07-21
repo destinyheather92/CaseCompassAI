@@ -1,5 +1,9 @@
 export type RoadmapStepStatus = "not-started" | "in-progress" | "completed";
 
+export type RoadmapStepCategory = "getting-started" | "legal-concepts" | "procedural-steps" | "case-documentation";
+export type RoadmapStepPriority = "essential" | "recommended" | "optional";
+export type RoadmapStepDifficulty = "beginner" | "intermediate" | "advanced";
+
 export interface ResearchRoadmapStep {
   id: string;
   order: number;
@@ -8,6 +12,11 @@ export interface ResearchRoadmapStep {
   whyItMatters: string;
   suggestedActions: string[];
   relatedTerms: string[];
+  category: RoadmapStepCategory;
+  priority: RoadmapStepPriority;
+  difficulty: RoadmapStepDifficulty;
+  /** Hand-estimated reading time in minutes — a rough guide, not a precise measurement. */
+  estimatedMinutes: number;
 }
 
 export interface LegalTermPreview {

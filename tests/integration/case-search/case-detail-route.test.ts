@@ -35,21 +35,26 @@ async function makeActiveUser() {
 }
 
 const sampleCase = {
-  providerName: "courtlistener",
+  providerName: "courtlistener" as const,
   providerCaseId: "1",
+  clusterId: null,
   caseName: "Smith v. State",
   citation: null,
+  citations: [],
   court: "sc",
+  courtId: "sc",
   jurisdiction: "sc",
   decisionDate: null,
   docketNumber: null,
   sourceUrl: "https://www.courtlistener.com/opinion/1/smith-v-state/",
   sourceName: "CourtListener (Free Law Project)",
+  originalCollection: null,
   publicationStatus: "published" as const,
   matchedTopics: [],
   relevanceSummary: "x",
   laterHistoryStatus: "not-checked" as const,
   verificationStatus: "verified" as const,
+  verificationMethod: "id-lookup" as const,
   dateVerified: new Date().toISOString(),
   disclaimer: "x",
 };

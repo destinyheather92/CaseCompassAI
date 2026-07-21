@@ -13,7 +13,7 @@ async function defaultClerkBanSetter(clerkUserId: string, banned: boolean): Prom
   }
 }
 
-export type UserStatusAction = "deactivate" | "reactivate";
+export type UserStatusAction = "deactivate" | "reactivate" | "archive";
 
 export interface ChangeInstitutionUserStatusInput {
   actorUserId: string;
@@ -33,11 +33,15 @@ export interface ChangeInstitutionUserStatusDeps {
 }
 
 /**
- * Deactivation bans the Clerk identity directly (defense in depth,
- * invariant #11/#34) in addition to flipping Prisma's accountStatus, so
- * a missed app-layer check elsewhere can't still let a disabled account
- * authenticate. Reactivation returns the user to PENDING_FIRST_LOGIN
- * rather than ACTIVE if they still owe a password change.
+ * Deactivation and archiving both ban the Clerk identity directly
+ * (defense in depth, invariant #11/#34) in addition to flipping Prisma's
+ * accountStatus, so a missed app-layer check elsewhere can't still let a
+ * blocked account authenticate. Archiving is the permanent-retirement
+ * counterpart to deactivation's temporary block — history (roadmaps,
+ * activity, audit rows) is never deleted, only hidden from the active
+ * roster. Reactivation works from either state and returns the user to
+ * PENDING_FIRST_LOGIN rather than ACTIVE if they still owe a password
+ * change.
  */
 export async function changeInstitutionUserStatus(
   input: ChangeInstitutionUserStatusInput,
@@ -53,22 +57,36 @@ export async function changeInstitutionUserStatus(
     return { status: "forbidden-institution" };
   }
 
-  const banned = input.action === "deactivate";
+  const banned = input.action === "deactivate" || input.action === "archive";
   try {
     await clerkBanSetter(target.clerkUserId, banned);
   } catch {
     return { status: "error", message: "Could not update the account. Please try again." };
   }
 
-  const accountStatus = banned ? "DISABLED" : target.mustChangePassword ? "PENDING_FIRST_LOGIN" : "ACTIVE";
+  const accountStatus =
+    input.action === "archive"
+      ? "ARCHIVED"
+      : banned
+        ? "DISABLED"
+        : target.mustChangePassword
+          ? "PENDING_FIRST_LOGIN"
+          : "ACTIVE";
 
   await prisma.user.update({ where: { id: target.id }, data: { accountStatus } });
+
+  const auditAction =
+    input.action === "archive"
+      ? "account_archived"
+      : input.action === "deactivate"
+        ? "account_deactivated"
+        : "account_reactivated";
 
   await recordAuditEvent({
     actorUserId: input.actorUserId,
     targetUserId: target.id,
     institutionId: input.institutionId,
-    action: banned ? "account_deactivated" : "account_reactivated",
+    action: auditAction,
     outcome: "success",
   });
 

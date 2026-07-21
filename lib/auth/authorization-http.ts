@@ -24,6 +24,8 @@ export function authorizationFailureResponse(reason: AuthorizationFailureReason)
       return { status: 401, body: { status: "unauthenticated", message: GENERIC_SIGN_IN_MESSAGE } };
     case "account-disabled":
       return { status: 403, body: { status: "account-disabled", message: "This account has been disabled." } };
+    case "account-archived":
+      return { status: 403, body: { status: "account-archived", message: "This account has been archived." } };
     case "account-locked":
       return { status: 403, body: { status: "account-locked", message: "This account is locked." } };
     case "temporary-password-expired":

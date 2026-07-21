@@ -30,9 +30,38 @@ describe("loadAppUserByClerkId", () => {
     expect(result).toEqual({ ok: false, reason: "unauthenticated", redirectTo: "/sign-in" });
   });
 
-  it("returns account-not-found when the Clerk user has no Prisma row yet", async () => {
-    const result = await loadAppUserByClerkId("clerk-id-with-no-app-user");
-    expect(result).toEqual({ ok: false, reason: "account-not-found", redirectTo: "/sign-in" });
+  it("lazily creates an INDIVIDUAL row for a real Clerk session with no Prisma row yet, rather than treating them as unauthenticated", async () => {
+    const clerkUserId = `clerk-lazy-sync-${Date.now()}-${Math.random()}`;
+    const result = await loadAppUserByClerkId(clerkUserId);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      createdUserIds.push(result.user.id);
+      expect(result.user.role).toBe("INDIVIDUAL");
+      expect(result.user.accountStatus).toBe("ACTIVE");
+      expect(result.user.mustChangePassword).toBe(false);
+    }
+  });
+
+  it("is idempotent — a second lookup for the same never-synced Clerk id returns the same row, not a duplicate", async () => {
+    const clerkUserId = `clerk-lazy-sync-idempotent-${Date.now()}-${Math.random()}`;
+    const first = await loadAppUserByClerkId(clerkUserId);
+    const second = await loadAppUserByClerkId(clerkUserId);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (first.ok && second.ok) {
+      createdUserIds.push(first.user.id);
+      expect(second.user.id).toBe(first.user.id);
+    }
+  });
+
+  it("never lazily overwrites an institution-managed user's role/scope — the upsert's update clause is a no-op", async () => {
+    const user = await makeUser({ role: "INCARCERATED_USER", institutionId: null, mustChangePassword: true });
+    const result = await loadAppUserByClerkId(user.clerkUserId);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.user.role).toBe("INCARCERATED_USER");
+      expect(result.user.mustChangePassword).toBe(true);
+    }
   });
 
   it("loads the AppUser for a known Clerk id", async () => {

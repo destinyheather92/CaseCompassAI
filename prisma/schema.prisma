@@ -32,6 +32,24 @@ enum AccountStatus {
   LOCKED
   PENDING_FIRST_LOGIN
   TEMPORARY_PASSWORD_EXPIRED
+  /// Soft-hidden from the active roster — distinct from DISABLED (a
+  /// temporary block); an archived account is treated as permanently
+  /// retired but its history is preserved, never deleted.
+  ARCHIVED
+}
+
+/// Kept open-ended (OTHER + institutionTypeOther freeform label on
+/// Institution) so new institution categories — law schools, nonprofits,
+/// educational partners — never require an enum migration to add.
+enum InstitutionType {
+  STATE_PRISON
+  FEDERAL_PRISON
+  COUNTY_JAIL
+  REENTRY_PROGRAM
+  LAW_LIBRARY
+  LEGAL_AID_PARTNER
+  EDUCATIONAL_PARTNER
+  OTHER
 }
 
 enum IntakeStatus {
@@ -92,6 +110,21 @@ model Institution {
   code   String  @unique
   active Boolean @default(true)
 
+  /// The fields below are collected at self-service registration
+  /// (app/institution/register) — see lib/institution/register-institution.ts.
+  /// All optional since the one seed-created demo institution predates
+  /// this form and existing rows have none of them set.
+  institutionType      InstitutionType?
+  institutionTypeOther String?
+  organizationName     String?
+  address              String?
+  contactName          String?
+  contactTitle         String?
+  contactEmail         String?
+  contactPhone         String?
+  estimatedPopulation  Int?
+  estimatedUsers       Int?
+
   facilities     Facility[]
   users          User[]
   intakeSessions IntakeSession[]
@@ -137,6 +170,16 @@ model User {
   displayName        String?
   username           String? @unique
   internalIdentifier String?
+  firstName          String?
+  lastName           String?
+  /// DOC number / inmate ID — a facility-assigned identifier, distinct
+  /// from internalIdentifier (which predates this field and stays
+  /// generic for non-incarcerated institution-managed roles).
+  docNumber          String?
+  /// Optional today; kept as a plain field (not a Housing Unit model) so
+  /// filtering by it is possible now without over-building a feature no
+  /// institution has asked to manage yet — see lib/institution/list-users.ts.
+  housingUnit        String?
 
   institutionId String?
   institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
@@ -173,6 +216,7 @@ model User {
   @@index([facilityId])
   @@index([role])
   @@index([accountStatus])
+  @@index([housingUnit])
 }
 
 model IntakeSession {
@@ -354,6 +398,110 @@ model SavedCase {
   @@unique([userId, providerName, providerCaseId])
   @@index([userId, createdAt])
   @@index([roadmapId])
+}
+
+/// Every legal-case provider this app knows about — only COURTLISTENER is
+/// active. The rest are documented future adapters (see
+/// docs/behavior/verified-case-search.md's provider architecture
+/// section) — no code ever calls them.
+enum LegalCaseProvider {
+  COURTLISTENER
+  VLEX
+  FASTCASE
+  WESTLAW
+  LEXIS
+}
+
+/// Mirrors lib/case-search/types.ts's CaseVerificationStatus — a case is
+/// never simply "verified" or not. See that file for what each value means.
+enum LegalCaseVerificationStatus {
+  VERIFIED
+  POSSIBLE_MATCH
+  NOT_VERIFIED
+  SOURCE_UNAVAILABLE
+}
+
+/// Normalized, persisted record of a case retrieved from a verified legal
+/// source provider — the durable counterpart to lib/case-search/cache.ts's
+/// in-memory search cache. Written when a case is opened in detail (not on
+/// every search hit, which would be wasteful), so citation-verification
+/// results and quote provenance have a stable place to live across
+/// requests and server restarts. Never stores AI-generated content — see
+/// CaseExplanationRecord, always a separate row/table, so source and
+/// AI-generated content can never be accidentally conflated.
+model LegalCaseRecord {
+  id             String            @id @default(cuid())
+  provider       LegalCaseProvider
+  providerCaseId String
+  clusterId      String?
+
+  caseName     String
+  citation     String?
+  /// Every reporter citation the provider returned, not just the primary one — string[].
+  citations    Json
+  courtName    String?
+  courtId      String?
+  jurisdiction String?
+  docketNumber String?
+  decisionDate DateTime?
+  /// Full opinion text when the provider made it available — never fabricated, may be null.
+  opinionText  String?
+  sourceUrl    String?
+
+  verificationStatus LegalCaseVerificationStatus
+  /// How the status was established (e.g. "citation-lookup", "id-lookup") — never claim a verification method that wasn't actually used.
+  verificationMethod String?
+  /// Set only when the provider's own metadata identifies this record as originally digitized by the Caselaw Access Project.
+  originalCollection String?
+
+  retrievedAt DateTime @default(now())
+  /// The raw provider response, kept for audit/debugging — never read directly by the UI, which only ever sees the normalized fields above.
+  rawSourceMetadata Json?
+
+  explanations CaseExplanationRecord[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, providerCaseId])
+  @@index([citation])
+}
+
+/// AI-generated educational content about a LegalCaseRecord — always a
+/// separate table from the source opinion, so it is structurally
+/// impossible to display AI-generated text as part of the original
+/// opinion. sourceTextHash lets a cached explanation be invalidated if
+/// the underlying opinion text ever changes (e.g. becomes available
+/// after previously being null).
+model CaseExplanationRecord {
+  id          String          @id @default(cuid())
+  legalCaseId String
+  legalCase   LegalCaseRecord @relation(fields: [legalCaseId], references: [id], onDelete: Cascade)
+
+  model          String
+  promptVersion  String
+  sourceTextHash String
+
+  summary           String
+  /// string[]
+  keyFacts          Json
+  /// string[]
+  legalIssues       Json
+  holding           String
+  courtsReasoning   String
+  ruleOfLaw         String
+  whyThisCaseMatters String
+  howItMightRelate  String
+  /// ImportantQuote[] — { quote, whyItMatters, location? }, each independently re-verified against opinionText before storage.
+  importantQuotes   Json
+  /// CaseKeyTerm[] — { term, definition }
+  keyTerms          Json
+  basedOnFullOpinionText Boolean
+
+  generatedAt DateTime @default(now())
+
+  @@index([legalCaseId])
+  @@index([sourceTextHash])
 }
 
 /// Safe, UI-facing activity history — see docs/behavior/user-dashboard.md

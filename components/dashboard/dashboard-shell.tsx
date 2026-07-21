@@ -40,7 +40,7 @@ export function DashboardShell({
       </header>
       <div className="mx-auto flex max-w-7xl">
         <DashboardSidebar navContext={navContext} postLogoutRedirect={postLogoutRedirect} />
-        <main className="min-w-0 flex-1 px-4 py-8 lg:px-8">{children}</main>
+        <main className="min-w-0 flex-1 px-4 py-10 lg:px-10">{children}</main>
       </div>
     </div>
   );

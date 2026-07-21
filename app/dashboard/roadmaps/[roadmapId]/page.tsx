@@ -4,8 +4,11 @@ import { notFound, redirect } from "next/navigation";
 import { requireDashboardAccess } from "@/lib/auth/dashboard-authorization";
 import { getRoadmapDetail } from "@/lib/dashboard/get-roadmap-detail";
 import { postLogoutRedirectFor } from "@/lib/auth/post-logout-redirect";
+import { groupStepsByCategory } from "@/lib/roadmap/group-steps-by-category";
 import { buttonVariants } from "@/components/ui/button";
 import { RoadmapStepCard } from "@/components/roadmap/roadmap-step-card";
+import { RoadmapProgressSummary } from "@/components/roadmap/roadmap-progress-summary";
+import { RoadmapCategorySection } from "@/components/roadmap/roadmap-category-section";
 import { CasesToResearch } from "@/components/roadmap/cases-to-research";
 import { DashboardDisclaimer } from "@/components/dashboard/dashboard-disclaimer";
 import { LogOutButton } from "@/components/dashboard/log-out-button";
@@ -54,16 +57,19 @@ export default async function RoadmapDetailPage({ params }: { params: Promise<{ 
         <p className="mt-1 text-xs text-cc-muted">{roadmap.jurisdiction.limitationNote}</p>
       </div>
 
-      <div className="flex flex-col gap-4">
-        {roadmap.steps
-          .slice()
-          .sort((a, b) => a.order - b.order)
-          .map((step) => (
-            <RoadmapStepCard key={step.id} roadmapId={roadmap.id} step={step} />
-          ))}
+      <RoadmapProgressSummary steps={roadmap.steps} />
+
+      <div className="flex flex-col gap-8">
+        {groupStepsByCategory(roadmap.steps.slice().sort((a, b) => a.order - b.order)).map((group) => (
+          <RoadmapCategorySection key={group.category} category={group.category} steps={group.steps}>
+            {group.steps.map((step) => (
+              <RoadmapStepCard key={step.id} roadmapId={roadmap.id} step={step} />
+            ))}
+          </RoadmapCategorySection>
+        ))}
       </div>
 
-      <CasesToResearch roadmapId={roadmap.id} />
+      <CasesToResearch roadmapId={roadmap.id} jurisdiction={roadmap.jurisdiction.code} />
 
       {roadmap.legalTerms.length > 0 && (
         <div className="glass-card rounded-2xl p-6">

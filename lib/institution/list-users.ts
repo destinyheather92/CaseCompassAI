@@ -7,6 +7,8 @@ export interface ListInstitutionUsersInput {
   facilityId?: string;
   role?: UserRole;
   status?: AccountStatus;
+  /** Future-ready: no institution currently manages formal housing-unit groupings, but the field and filter already exist so this needs no schema change later. */
+  housingUnit?: string;
   search?: string;
   page?: number;
   pageSize?: number;
@@ -16,6 +18,10 @@ export interface ListedInstitutionUser {
   id: string;
   username: string | null;
   displayName: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  docNumber: string | null;
+  housingUnit: string | null;
   role: UserRole;
   accountStatus: AccountStatus;
   facilityId: string | null;
@@ -50,11 +56,15 @@ export async function listInstitutionUsers(input: ListInstitutionUsersInput): Pr
     ...(input.facilityId ? { facilityId: input.facilityId } : {}),
     ...(input.role ? { role: input.role } : {}),
     ...(input.status ? { accountStatus: input.status } : {}),
+    ...(input.housingUnit ? { housingUnit: input.housingUnit } : {}),
     ...(input.search
       ? {
           OR: [
             { username: { contains: input.search, mode: "insensitive" as const } },
             { internalIdentifier: { contains: input.search, mode: "insensitive" as const } },
+            { firstName: { contains: input.search, mode: "insensitive" as const } },
+            { lastName: { contains: input.search, mode: "insensitive" as const } },
+            { docNumber: { contains: input.search, mode: "insensitive" as const } },
           ],
         }
       : {}),
@@ -70,6 +80,10 @@ export async function listInstitutionUsers(input: ListInstitutionUsersInput): Pr
         id: true,
         username: true,
         displayName: true,
+        firstName: true,
+        lastName: true,
+        docNumber: true,
+        housingUnit: true,
         role: true,
         accountStatus: true,
         facilityId: true,

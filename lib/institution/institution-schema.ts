@@ -18,8 +18,8 @@ export function mapApiRoleToPrismaRole(role: AssignableApiRole): UserRole {
 /**
  * Validates a staff-submitted institution user creation request. Any
  * client-supplied `institutionId`/`facilityId`-as-scope-override or role
- * outside the three assignable roles is rejected or stripped here — the
- * server route still independently derives institution scope from the
+ * outside the assignable roles is rejected or stripped here — the server
+ * route still independently derives institution scope from the
  * authenticated staff member, never from this payload (invariant #23).
  */
 export const institutionUserCreateSchema = z.object({
@@ -37,6 +37,11 @@ export const institutionUserCreateSchema = z.object({
     .max(128, "Temporary password must be 128 characters or fewer.")
     .optional(),
   displayName: z.string().trim().max(100).optional(),
+  firstName: z.string().trim().max(100).optional(),
+  lastName: z.string().trim().max(100).optional(),
+  /** DOC number / inmate ID — a facility-assigned identifier, most relevant for incarcerated-user accounts but not restricted to them. */
+  docNumber: z.string().trim().max(100).optional(),
+  housingUnit: z.string().trim().max(100).optional(),
   facilityId: z.string().trim().min(1).max(64).optional(),
   internalIdentifier: z.string().trim().max(100).optional(),
 });

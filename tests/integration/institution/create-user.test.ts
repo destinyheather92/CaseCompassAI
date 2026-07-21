@@ -161,4 +161,32 @@ describe("createInstitutionUser", () => {
     expect(events[0].outcome).toBe("SUCCESS");
     expect(events[0].targetUserId).toBe(result.status === "created" ? result.user.id : undefined);
   });
+
+  it("stores firstName, lastName, docNumber, and housingUnit when provided", async () => {
+    const institution = await makeInstitution();
+    const staff = await makeStaff(institution.id);
+
+    const result = await createInstitutionUser(
+      {
+        actorUserId: staff.id,
+        institutionId: institution.id,
+        role: "incarcerated-user",
+        firstName: "Jordan",
+        lastName: "Rivera",
+        docNumber: "SC-00012345",
+        housingUnit: "Block C",
+      },
+      { clerkUserCreator: fakeClerkCreator() },
+    );
+
+    expect(result.status).toBe("created");
+    if (result.status !== "created") return;
+    createdUserIds.push(result.user.id);
+
+    const stored = await prisma.user.findUnique({ where: { id: result.user.id } });
+    expect(stored?.firstName).toBe("Jordan");
+    expect(stored?.lastName).toBe("Rivera");
+    expect(stored?.docNumber).toBe("SC-00012345");
+    expect(stored?.housingUnit).toBe("Block C");
+  });
 });

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireAuthenticatedUser } from "@/lib/auth/authorization";
+import { getPostPasswordSetupRoute } from "@/lib/auth/post-password-setup-redirect";
 import { FirstLoginForm } from "@/components/auth/first-login-form";
 
 export const metadata: Metadata = {
@@ -26,7 +27,7 @@ export default async function FirstLoginPage() {
   }
 
   if (!authResult.user.mustChangePassword) {
-    redirect(authResult.user.role === "INSTITUTION_ADMIN" ? "/institution/dashboard" : "/get-started");
+    redirect(await getPostPasswordSetupRoute({ id: authResult.user.id, role: authResult.user.role }));
   }
 
   return (

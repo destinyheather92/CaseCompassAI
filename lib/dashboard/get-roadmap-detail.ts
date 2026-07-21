@@ -12,6 +12,10 @@ export interface RoadmapDetailStep {
   whyItMatters: string;
   suggestedActions: string[];
   relatedTerms: string[];
+  category: ResearchRoadmapContent["steps"][number]["category"];
+  priority: ResearchRoadmapContent["steps"][number]["priority"];
+  difficulty: ResearchRoadmapContent["steps"][number]["difficulty"];
+  estimatedMinutes: number;
   status: RoadmapStepStatus;
   note: string | null;
 }

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireAuthenticatedUser } from "@/lib/auth/authorization";
+import { INSTITUTION_MANAGEMENT_ROLES } from "@/lib/auth/institution-permissions";
 import { UserManagement } from "@/components/institution/user-management";
 
 export const metadata: Metadata = {
@@ -8,17 +9,15 @@ export const metadata: Metadata = {
 };
 
 export default async function InstitutionUsersPage() {
-  const authResult = await requireAuthenticatedUser({ roles: ["INSTITUTION_ADMIN"] });
+  const authResult = await requireAuthenticatedUser({ roles: INSTITUTION_MANAGEMENT_ROLES });
 
   if (!authResult.ok) {
     redirect(authResult.redirectTo);
   }
 
   return (
-    <div className="min-h-screen bg-cc-bg px-6 py-12 lg:px-10">
-      <div className="mx-auto max-w-6xl">
-        <UserManagement />
-      </div>
+    <div className="mx-auto max-w-6xl">
+      <UserManagement />
     </div>
   );
 }

@@ -2,16 +2,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { requireAuthenticatedUser } from "@/lib/auth/authorization";
 import { authorizationFailureResponse } from "@/lib/auth/authorization-http";
+import { INSTITUTION_MANAGEMENT_ROLES } from "@/lib/auth/institution-permissions";
 import { changeInstitutionUserStatus } from "@/lib/institution/change-user-status";
 
 export const runtime = "nodejs";
 
 const patchSchema = z.object({
-  action: z.enum(["deactivate", "reactivate"]),
+  action: z.enum(["deactivate", "reactivate", "archive"]),
 });
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const authResult = await requireAuthenticatedUser({ roles: ["INSTITUTION_ADMIN"] });
+  const authResult = await requireAuthenticatedUser({ roles: INSTITUTION_MANAGEMENT_ROLES });
   if (!authResult.ok) {
     const failure = authorizationFailureResponse(authResult.reason);
     return NextResponse.json(failure.body, { status: failure.status });
@@ -35,7 +36,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { status: "invalid-request", message: "action must be 'deactivate' or 'reactivate'." },
+      { status: "invalid-request", message: "action must be 'deactivate', 'reactivate', or 'archive'." },
       { status: 400 },
     );
   }

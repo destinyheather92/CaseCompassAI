@@ -2,6 +2,7 @@ import { requireOptionalUser } from "@/lib/auth/authorization";
 import { resolveHomepageNavState } from "@/lib/dashboard/homepage-nav-state";
 import { Navbar } from "@/components/site/navbar";
 import { Hero } from "@/components/site/hero";
+import { ChoosePath } from "@/components/site/choose-path";
 import { ImpactStats } from "@/components/site/impact-stats";
 import { RoadmapSteps } from "@/components/site/roadmap-steps";
 import { Features } from "@/components/site/features";
@@ -20,6 +21,7 @@ export default async function Home() {
       <Navbar authenticatedNav={authenticatedNav} />
       <main className="flex-1">
         <Hero />
+        <ChoosePath />
         <ImpactStats />
         <RoadmapSteps />
         <Features />

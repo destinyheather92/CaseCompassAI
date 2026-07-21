@@ -15,21 +15,36 @@ function jsonResponse(body: unknown, status = 200) {
 const sampleCase = {
   providerName: "courtlistener",
   providerCaseId: "1",
+  clusterId: null,
   caseName: "Smith v. State",
   citation: null,
+  citations: [],
   court: "sc",
+  courtId: "sc",
   jurisdiction: "sc",
   decisionDate: null,
   docketNumber: null,
   sourceUrl: "https://www.courtlistener.com/opinion/1/smith-v-state/",
   sourceName: "CourtListener (Free Law Project)",
+  originalCollection: null,
   publicationStatus: "published" as const,
   matchedTopics: ["habeas corpus"],
   relevanceSummary: "x",
   laterHistoryStatus: "not-checked" as const,
   verificationStatus: "verified" as const,
+  verificationMethod: "search-match" as const,
   dateVerified: new Date().toISOString(),
   disclaimer: "x",
+};
+
+const notVerifiedCase = {
+  ...sampleCase,
+  providerCaseId: "2",
+  caseName: "Doe v. Roe",
+  jurisdiction: "ny",
+  courtId: "ny",
+  matchedTopics: ["due process"],
+  verificationStatus: "not_verified" as const,
 };
 
 describe("CasesToResearch", () => {
@@ -60,7 +75,7 @@ describe("CasesToResearch", () => {
     fetchMock.mockRejectedValueOnce(new Error("network down"));
     render(<CasesToResearch roadmapId="r1" />);
 
-    expect(await screen.findByText(/could not verify additional cases/i)).toBeInTheDocument();
+    expect(await screen.findByText(/legal source is temporarily unavailable/i)).toBeInTheDocument();
   });
 
   it("Find Additional Cases sends structured filters and replaces the list", async () => {
@@ -86,5 +101,54 @@ describe("CasesToResearch", () => {
       expect(lastCallBody.publishedOnly).toBe(true);
       expect(screen.getByText("Smith v. State")).toBeInTheDocument();
     });
+  });
+
+  it("filters the visible list by verification status", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: "ok", page: { cases: [sampleCase, notVerifiedCase], nextCursor: null } }));
+    const user = userEvent.setup();
+    render(<CasesToResearch roadmapId="r1" />);
+
+    await screen.findByText("Smith v. State");
+    expect(screen.getByText("Doe v. Roe")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText(/verification status/i), "verified");
+
+    expect(screen.getByText("Smith v. State")).toBeInTheDocument();
+    expect(screen.queryByText("Doe v. Roe")).not.toBeInTheDocument();
+  });
+
+  it("filters the visible list by authority type when a jurisdiction is provided", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: "ok", page: { cases: [sampleCase, notVerifiedCase], nextCursor: null } }));
+    const user = userEvent.setup();
+    render(<CasesToResearch roadmapId="r1" jurisdiction="sc" />);
+
+    await screen.findByText("Smith v. State");
+    await user.selectOptions(screen.getByLabelText(/authority type/i), "binding");
+
+    expect(screen.getByText("Smith v. State")).toBeInTheDocument();
+    expect(screen.queryByText("Doe v. Roe")).not.toBeInTheDocument();
+  });
+
+  it("filters the visible list by roadmap topic", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: "ok", page: { cases: [sampleCase, notVerifiedCase], nextCursor: null } }));
+    const user = userEvent.setup();
+    render(<CasesToResearch roadmapId="r1" />);
+
+    await screen.findByText("Smith v. State");
+    await user.selectOptions(screen.getByLabelText(/roadmap topic/i), "due process");
+
+    expect(screen.queryByText("Smith v. State")).not.toBeInTheDocument();
+    expect(screen.getByText("Doe v. Roe")).toBeInTheDocument();
+  });
+
+  it("shows the no-cases-found message when filters exclude every result", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: "ok", page: { cases: [sampleCase], nextCursor: null } }));
+    const user = userEvent.setup();
+    render(<CasesToResearch roadmapId="r1" />);
+
+    await screen.findByText("Smith v. State");
+    await user.selectOptions(screen.getByLabelText(/verification status/i), "not_verified");
+
+    expect(screen.getByText(/no verified cases were found/i)).toBeInTheDocument();
   });
 });

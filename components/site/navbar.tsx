@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Compass, Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { SignInButton, SignUpButton, Show, UserButton } from "@clerk/nextjs";
+import { SignInButton, SignUpButton, Show, UserButton, useAuth } from "@clerk/nextjs";
 import { navLinks } from "@/lib/site-data";
 
 function idFromHref(href: string) {
@@ -70,7 +70,24 @@ export function Navbar({ authenticatedNav }: { authenticatedNav?: NavbarAuthenti
   const { activeId, setActiveNow } = useActiveSection(sectionIds);
   const headerRef = useRef<HTMLElement>(null);
   const pathname = usePathname();
+  const router = useRouter();
+  const { isLoaded, isSignedIn } = useAuth();
+  const wasSignedIn = useRef<boolean | undefined>(undefined);
   const isHome = pathname === "/";
+
+  // SignInButton/SignUpButton use mode="modal", so a sign-in never
+  // navigates away from this page — the server-computed
+  // `authenticatedNav` prop stays stale (from before sign-in) until
+  // something forces a re-render. Refresh once when Clerk's client
+  // state flips to signed-in so the real Dashboard/CTA links appear
+  // without requiring a manual page reload.
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (wasSignedIn.current === false && isSignedIn) {
+      router.refresh();
+    }
+    wasSignedIn.current = isSignedIn;
+  }, [isLoaded, isSignedIn, router]);
 
   // Custom smooth-scroll instead of relying on the browser's native
   // anchor-jump: it lets the active-state update land in the same tick as
@@ -165,6 +182,12 @@ export function Navbar({ authenticatedNav }: { authenticatedNav?: NavbarAuthenti
 
           <div className="hidden items-center gap-2 lg:flex">
             <Show when="signed-out">
+              <Link
+                href="/institution/register"
+                className="rounded-full px-4 py-2.5 text-sm font-medium text-cc-muted transition-colors hover:text-cc-text outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
+              >
+                Register Your Facility
+              </Link>
               <SignInButton mode="modal">
                 <button
                   type="button"
@@ -183,21 +206,19 @@ export function Navbar({ authenticatedNav }: { authenticatedNav?: NavbarAuthenti
               </SignUpButton>
             </Show>
             <Show when="signed-in">
+              <Link
+                href={authenticatedNav?.dashboardHref ?? "/dashboard"}
+                className="rounded-full px-4 py-2.5 text-sm font-medium text-cc-muted transition-colors hover:text-cc-text outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
+              >
+                Dashboard
+              </Link>
               {authenticatedNav && (
-                <>
-                  <Link
-                    href={authenticatedNav.dashboardHref}
-                    className="rounded-full px-4 py-2.5 text-sm font-medium text-cc-muted transition-colors hover:text-cc-text outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
-                  >
-                    Dashboard
-                  </Link>
-                  <Link
-                    href={authenticatedNav.ctaHref}
-                    className="group inline-flex items-center justify-center rounded-full border border-cc-purple/60 px-5 py-2.5 text-sm font-semibold text-cc-text transition-all duration-300 hover:border-cc-purple hover:shadow-[0_0_24px_rgba(139,92,246,0.45)] outline-none focus-visible:ring-2 focus-visible:ring-cc-purple focus-visible:ring-offset-2 focus-visible:ring-offset-cc-bg"
-                  >
-                    {authenticatedNav.ctaLabel}
-                  </Link>
-                </>
+                <Link
+                  href={authenticatedNav.ctaHref}
+                  className="group inline-flex items-center justify-center rounded-full border border-cc-purple/60 px-5 py-2.5 text-sm font-semibold text-cc-text transition-all duration-300 hover:border-cc-purple hover:shadow-[0_0_24px_rgba(139,92,246,0.45)] outline-none focus-visible:ring-2 focus-visible:ring-cc-purple focus-visible:ring-offset-2 focus-visible:ring-offset-cc-bg"
+                >
+                  {authenticatedNav.ctaLabel}
+                </Link>
               )}
               <UserButton />
             </Show>
@@ -262,6 +283,13 @@ export function Navbar({ authenticatedNav }: { authenticatedNav?: NavbarAuthenti
                 })}
                 <li className="flex flex-col gap-2 pt-2">
                   <Show when="signed-out">
+                    <Link
+                      href="/institution/register"
+                      onClick={() => setOpen(false)}
+                      className="flex w-full items-center justify-center rounded-full border border-transparent px-5 py-3 text-base font-medium text-cc-muted hover:bg-white/[0.04] hover:text-cc-text outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
+                    >
+                      Register Your Facility
+                    </Link>
                     <SignInButton mode="modal">
                       <button
                         type="button"
@@ -282,23 +310,21 @@ export function Navbar({ authenticatedNav }: { authenticatedNav?: NavbarAuthenti
                     </SignUpButton>
                   </Show>
                   <Show when="signed-in">
+                    <Link
+                      href={authenticatedNav?.dashboardHref ?? "/dashboard"}
+                      onClick={() => setOpen(false)}
+                      className="flex w-full items-center justify-center rounded-full border border-transparent px-5 py-3 text-base font-medium text-cc-muted hover:bg-white/[0.04] hover:text-cc-text outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
+                    >
+                      Dashboard
+                    </Link>
                     {authenticatedNav && (
-                      <>
-                        <Link
-                          href={authenticatedNav.dashboardHref}
-                          onClick={() => setOpen(false)}
-                          className="flex w-full items-center justify-center rounded-full border border-transparent px-5 py-3 text-base font-medium text-cc-muted hover:bg-white/[0.04] hover:text-cc-text outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
-                        >
-                          Dashboard
-                        </Link>
-                        <Link
-                          href={authenticatedNav.ctaHref}
-                          onClick={() => setOpen(false)}
-                          className="flex w-full items-center justify-center rounded-full border border-cc-purple/60 px-5 py-3 text-base font-semibold text-cc-text hover:border-cc-purple outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
-                        >
-                          {authenticatedNav.ctaLabel}
-                        </Link>
-                      </>
+                      <Link
+                        href={authenticatedNav.ctaHref}
+                        onClick={() => setOpen(false)}
+                        className="flex w-full items-center justify-center rounded-full border border-cc-purple/60 px-5 py-3 text-base font-semibold text-cc-text hover:border-cc-purple outline-none focus-visible:ring-2 focus-visible:ring-cc-purple"
+                      >
+                        {authenticatedNav.ctaLabel}
+                      </Link>
                     )}
                     <div className="flex items-center justify-center gap-3 rounded-full border border-cc-border px-5 py-2.5">
                       <UserButton />

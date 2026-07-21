@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import type { UserRole } from "@/lib/generated/prisma/enums";
+import { syncIndividualUserFromClerk } from "@/lib/auth/sync-clerk-user";
+import type { UserRole, AccountStatus } from "@/lib/generated/prisma/enums";
 
 /**
  * The application-owned authorization record for the current caller.
@@ -11,7 +12,7 @@ export interface AppUser {
   id: string;
   clerkUserId: string;
   role: UserRole;
-  accountStatus: "ACTIVE" | "DISABLED" | "LOCKED" | "PENDING_FIRST_LOGIN" | "TEMPORARY_PASSWORD_EXPIRED";
+  accountStatus: AccountStatus;
   institutionId: string | null;
   facilityId: string | null;
   mustChangePassword: boolean;
@@ -21,6 +22,7 @@ export type AuthorizationFailureReason =
   | "unauthenticated"
   | "account-not-found"
   | "account-disabled"
+  | "account-archived"
   | "account-locked"
   | "temporary-password-expired"
   | "must-change-password"
@@ -46,15 +48,29 @@ function fail(reason: AuthorizationFailureReason, redirectTo: string): Authoriza
  * testable without an HTTP request, and so there is no code path where a
  * client-supplied identifier can be substituted for the server-verified
  * one — see `requireAuthenticatedUser` for the real entry point.
+ *
+ * Falls back to lazily creating the individual-user row when none exists
+ * yet — the primary sync path is the `user.created` Clerk webhook
+ * (`app/api/webhooks/clerk/route.ts`), but that webhook requires a
+ * publicly-reachable URL registered in the Clerk Dashboard, which isn't
+ * configured in every environment (see CLERK_WEBHOOK_SIGNING_SECRET in
+ * .env.example). Without this fallback, a real signed-in Clerk user with
+ * no Prisma row is indistinguishable from "not signed in" and gets
+ * bounced to /sign-in — this closes that gap safely: it can only ever
+ * create an INDIVIDUAL account (never a role/institution a client could
+ * influence), and institution-managed users always already have their
+ * row created synchronously at account-creation time, before they're
+ * ever issued credentials to sign in with, so this path never applies to
+ * them in practice.
  */
 export async function loadAppUserByClerkId(clerkUserId: string | null): Promise<AuthorizationResult> {
   if (!clerkUserId) {
     return fail("unauthenticated", "/sign-in");
   }
 
-  const user = await prisma.user.findUnique({ where: { clerkUserId } });
+  let user = await prisma.user.findUnique({ where: { clerkUserId } });
   if (!user) {
-    return fail("account-not-found", "/sign-in");
+    user = await syncIndividualUserFromClerk({ clerkUserId });
   }
 
   return ok(user);
@@ -64,6 +80,8 @@ export function requireActiveAccount(user: AppUser): AuthorizationResult {
   switch (user.accountStatus) {
     case "DISABLED":
       return fail("account-disabled", "/sign-in");
+    case "ARCHIVED":
+      return fail("account-archived", "/sign-in");
     case "LOCKED":
       return fail("account-locked", "/sign-in");
     case "TEMPORARY_PASSWORD_EXPIRED":
@@ -74,8 +92,16 @@ export function requireActiveAccount(user: AppUser): AuthorizationResult {
   }
 }
 
+/**
+ * The staff-issued-temporary-password lifecycle is institution-only —
+ * individual accounts authenticate through Clerk's own self-serve
+ * email/password (or OAuth) and never have a temporary password to
+ * begin with. Gate exempts INDIVIDUAL entirely so this check can never
+ * misfire for a regular user, even if `mustChangePassword` were
+ * somehow true on that row.
+ */
 export function requirePasswordChangeComplete(user: AppUser): AuthorizationResult {
-  if (user.mustChangePassword) {
+  if (user.role !== "INDIVIDUAL" && user.mustChangePassword) {
     return fail("must-change-password", "/first-login");
   }
   return ok(user);

@@ -29,6 +29,10 @@ interface InstitutionUser {
   id: string;
   username: string | null;
   displayName: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  docNumber?: string | null;
+  housingUnit?: string | null;
   role: string;
   accountStatus: string;
   facilityId: string | null;
@@ -48,6 +52,7 @@ function humanize(value: string): string {
 function statusBadgeVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
   if (status === "ACTIVE") return "default";
   if (status === "DISABLED" || status === "LOCKED") return "destructive";
+  if (status === "ARCHIVED") return "outline";
   return "secondary";
 }
 
@@ -59,15 +64,17 @@ interface IssuedCredential {
 export function UserManagement() {
   const [users, setUsers] = useState<InstitutionUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [createRole, setCreateRole] = useState<AssignableRole>("incarcerated-user");
   const [createError, setCreateError] = useState<string | null>(null);
   const [issuedCredential, setIssuedCredential] = useState<IssuedCredential | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (searchTerm?: string) => {
     setLoading(true);
     try {
-      const response = await fetch("/api/institution/users");
+      const query = searchTerm ? `?search=${encodeURIComponent(searchTerm)}` : "";
+      const response = await fetch(`/api/institution/users${query}`);
       const body = await response.json();
       setUsers(body.users ?? []);
     } finally {
@@ -79,8 +86,13 @@ export function UserManagement() {
     // Defer past the synchronous portion of refresh() (which calls
     // setLoading(true) immediately) so the effect body itself never
     // triggers a setState synchronously during commit.
-    void Promise.resolve().then(refresh);
+    void Promise.resolve().then(() => refresh());
   }, [refresh]);
+
+  function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    refresh(search);
+  }
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -88,11 +100,15 @@ export function UserManagement() {
     const formData = new FormData(event.currentTarget);
     const username = (formData.get("username") as string) || undefined;
     const displayName = (formData.get("displayName") as string) || undefined;
+    const firstName = (formData.get("firstName") as string) || undefined;
+    const lastName = (formData.get("lastName") as string) || undefined;
+    const docNumber = (formData.get("docNumber") as string) || undefined;
+    const housingUnit = (formData.get("housingUnit") as string) || undefined;
 
     const response = await fetch("/api/institution/users", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ role: createRole, username, displayName }),
+      body: JSON.stringify({ role: createRole, username, displayName, firstName, lastName, docNumber, housingUnit }),
     });
     const body = await response.json();
 
@@ -107,17 +123,16 @@ export function UserManagement() {
   function closeCreateDialog() {
     setCreateOpen(false);
     setIssuedCredential(null);
-    refresh();
+    refresh(search);
   }
 
-  async function handleStatusToggle(targetUser: InstitutionUser) {
-    const action = targetUser.accountStatus === "DISABLED" ? "reactivate" : "deactivate";
+  async function handleStatusChange(targetUser: InstitutionUser, action: "deactivate" | "reactivate" | "archive") {
     await fetch(`/api/institution/users/${targetUser.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action }),
     });
-    refresh();
+    refresh(search);
   }
 
   async function handleResetPassword(targetUser: InstitutionUser) {
@@ -126,7 +141,7 @@ export function UserManagement() {
     if (response.ok) {
       setIssuedCredential({ username: targetUser.username ?? "", temporaryPassword: body.temporaryPassword });
     }
-    refresh();
+    refresh(search);
   }
 
   return (
@@ -152,72 +167,109 @@ export function UserManagement() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-cc-text">Institution Users</h2>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger render={<Button>Create User</Button>} />
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create Institution User</DialogTitle>
-            </DialogHeader>
-            {issuedCredential ? (
-              <div className="flex flex-col gap-3">
-                <p className="text-sm text-cc-text">
-                  Temporary password for <span className="font-mono">{issuedCredential.username}</span>:
-                </p>
-                <p className="font-mono text-lg text-cc-purple">{issuedCredential.temporaryPassword}</p>
-                <p className="text-sm text-cc-muted">
-                  Copy this temporary password now. It cannot be viewed again.
-                </p>
-                <DialogFooter>
-                  <Button type="button" onClick={closeCreateDialog}>
-                    Done
-                  </Button>
-                </DialogFooter>
-              </div>
-            ) : (
-              <form onSubmit={handleCreate} className="flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="create-role">Role</Label>
-                  <select
-                    id="create-role"
-                    name="role"
-                    value={createRole}
-                    onChange={(event) => setCreateRole(event.target.value as AssignableRole)}
-                    className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
-                  >
-                    <option value="incarcerated-user">Incarcerated User</option>
-                    <option value="educator">Educator</option>
-                    <option value="legal-aid-staff">Legal Aid Staff</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="create-username">Username (optional — generated if left blank)</Label>
-                  <Input id="create-username" name="username" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="create-display-name">Display name (optional)</Label>
-                  <Input id="create-display-name" name="displayName" />
-                </div>
-                {createError && (
-                  <p role="alert" className="text-sm text-destructive">
-                    {createError}
+        <div className="flex items-center gap-2">
+          <form onSubmit={handleSearchSubmit} className="flex items-center gap-2">
+            <Label htmlFor="user-search" className="sr-only">
+              Search users
+            </Label>
+            <Input
+              id="user-search"
+              placeholder="Search by name, username, or DOC number"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="w-64"
+            />
+            <Button type="submit" variant="outline" size="sm">
+              Search
+            </Button>
+          </form>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger render={<Button>Create User</Button>} />
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create Institution User</DialogTitle>
+              </DialogHeader>
+              {issuedCredential ? (
+                <div className="flex flex-col gap-3">
+                  <p className="text-sm text-cc-text">
+                    Temporary password for <span className="font-mono">{issuedCredential.username}</span>:
                   </p>
-                )}
-                <DialogFooter>
-                  <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-                  <Button type="submit">Create</Button>
-                </DialogFooter>
-              </form>
-            )}
-          </DialogContent>
-        </Dialog>
+                  <p className="font-mono text-lg text-cc-purple">{issuedCredential.temporaryPassword}</p>
+                  <p className="text-sm text-cc-muted">
+                    Copy this temporary password now. It cannot be viewed again.
+                  </p>
+                  <DialogFooter>
+                    <Button type="button" onClick={closeCreateDialog}>
+                      Done
+                    </Button>
+                  </DialogFooter>
+                </div>
+              ) : (
+                <form onSubmit={handleCreate} className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="create-role">Role</Label>
+                    <select
+                      id="create-role"
+                      name="role"
+                      value={createRole}
+                      onChange={(event) => setCreateRole(event.target.value as AssignableRole)}
+                      className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                    >
+                      <option value="incarcerated-user">Incarcerated User</option>
+                      <option value="educator">Educator</option>
+                      <option value="legal-aid-staff">Legal Aid Staff</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="create-first-name">First name (optional)</Label>
+                      <Input id="create-first-name" name="firstName" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="create-last-name">Last name (optional)</Label>
+                      <Input id="create-last-name" name="lastName" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="create-doc-number">DOC Number / Inmate ID (optional)</Label>
+                    <Input id="create-doc-number" name="docNumber" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="create-housing-unit">Housing Unit (optional)</Label>
+                    <Input id="create-housing-unit" name="housingUnit" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="create-username">Username (optional — generated if left blank)</Label>
+                    <Input id="create-username" name="username" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="create-display-name">Display name (optional)</Label>
+                    <Input id="create-display-name" name="displayName" />
+                  </div>
+                  {createError && (
+                    <p role="alert" className="text-sm text-destructive">
+                      {createError}
+                    </p>
+                  )}
+                  <DialogFooter>
+                    <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+                    <Button type="submit">Create</Button>
+                  </DialogFooter>
+                </form>
+              )}
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Username</TableHead>
+            <TableHead>Name</TableHead>
+            <TableHead>DOC Number</TableHead>
             <TableHead>Role</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Last Login</TableHead>
@@ -227,29 +279,42 @@ export function UserManagement() {
         <TableBody>
           {!loading && users.length === 0 && (
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-cc-muted">
+              <TableCell colSpan={7} className="text-center text-cc-muted">
                 No users yet.
               </TableCell>
             </TableRow>
           )}
-          {users.map((u) => (
-            <TableRow key={u.id}>
-              <TableCell className="font-mono">{u.username}</TableCell>
-              <TableCell>{humanize(u.role)}</TableCell>
-              <TableCell>
-                <Badge variant={statusBadgeVariant(u.accountStatus)}>{humanize(u.accountStatus)}</Badge>
-              </TableCell>
-              <TableCell>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : "Never"}</TableCell>
-              <TableCell className="flex gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => handleStatusToggle(u)}>
-                  {u.accountStatus === "DISABLED" ? "Reactivate" : "Deactivate"}
-                </Button>
-                <Button type="button" variant="outline" size="sm" onClick={() => handleResetPassword(u)}>
-                  Reset Password
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
+          {users.map((u) => {
+            const isArchived = u.accountStatus === "ARCHIVED";
+            const isDisabled = u.accountStatus === "DISABLED";
+            const toggleAction = isDisabled || isArchived ? "reactivate" : "deactivate";
+            const name = [u.firstName, u.lastName].filter(Boolean).join(" ") || u.displayName || "—";
+            return (
+              <TableRow key={u.id}>
+                <TableCell className="font-mono">{u.username}</TableCell>
+                <TableCell>{name}</TableCell>
+                <TableCell className="font-mono">{u.docNumber ?? "—"}</TableCell>
+                <TableCell>{humanize(u.role)}</TableCell>
+                <TableCell>
+                  <Badge variant={statusBadgeVariant(u.accountStatus)}>{humanize(u.accountStatus)}</Badge>
+                </TableCell>
+                <TableCell>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : "Never"}</TableCell>
+                <TableCell className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => handleStatusChange(u, toggleAction)}>
+                    {toggleAction === "reactivate" ? "Reactivate" : "Deactivate"}
+                  </Button>
+                  {!isArchived && (
+                    <Button type="button" variant="outline" size="sm" onClick={() => handleStatusChange(u, "archive")}>
+                      Archive
+                    </Button>
+                  )}
+                  <Button type="button" variant="outline" size="sm" onClick={() => handleResetPassword(u)}>
+                    Reset Password
+                  </Button>
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>

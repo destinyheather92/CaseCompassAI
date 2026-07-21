@@ -18,14 +18,25 @@ describe("institutionUserCreateSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects a role outside the three institution-assignable roles", () => {
+  it("rejects a role outside the institution-assignable roles", () => {
     const result = institutionUserCreateSchema.safeParse({ role: "system-admin" });
     expect(result.success).toBe(false);
   });
 
-  it("rejects institution-admin as an assignable role via this endpoint (staff cannot create other admins here)", () => {
+  it("rejects institution-admin as an assignable role via this endpoint (never assignable through this form)", () => {
     const result = institutionUserCreateSchema.safeParse({ role: "institution-admin" });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts the inmate-specific fields (firstName, lastName, docNumber, housingUnit)", () => {
+    const result = institutionUserCreateSchema.safeParse({
+      role: "incarcerated-user",
+      firstName: "Jordan",
+      lastName: "Rivera",
+      docNumber: "SC-00012345",
+      housingUnit: "Block C",
+    });
+    expect(result.success).toBe(true);
   });
 
   it("rejects a missing role", () => {

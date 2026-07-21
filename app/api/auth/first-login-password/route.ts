@@ -3,6 +3,7 @@ import { requireAuthenticatedUser } from "@/lib/auth/authorization";
 import { authorizationFailureResponse } from "@/lib/auth/authorization-http";
 import { firstLoginPasswordSchema } from "@/lib/auth/password-policy";
 import { completeFirstLogin } from "@/lib/auth/first-login-password";
+import { getPostPasswordSetupRoute } from "@/lib/auth/post-password-setup-redirect";
 import { createRateLimiter } from "@/lib/security/rate-limit";
 
 export const runtime = "nodejs";
@@ -52,8 +53,10 @@ export async function POST(request: NextRequest) {
 
   switch (result.status) {
     case "changed":
-    case "not-required":
-      return NextResponse.json({ status: result.status, redirectTo: "/get-started" }, { status: 200 });
+    case "not-required": {
+      const redirectTo = await getPostPasswordSetupRoute({ id: authResult.user.id, role: authResult.user.role });
+      return NextResponse.json({ status: result.status, redirectTo }, { status: 200 });
+    }
     case "incorrect-current-password":
       return NextResponse.json(
         { status: "incorrect-current-password", message: "Your current password is incorrect." },

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Compass } from "lucide-react";
 
 const STAGES = [
   "Organizing your information…",
@@ -27,11 +28,15 @@ export function IntakeLoading() {
   }, []);
 
   return (
-    <div className="flex w-full max-w-md flex-col items-center gap-4 py-12 text-center">
-      <div
-        aria-hidden="true"
-        className="size-10 animate-spin rounded-full border-2 border-cc-purple/30 border-t-cc-purple motion-reduce:animate-none"
-      />
+    <div className="glass-card flex w-full max-w-md flex-col items-center gap-4 rounded-3xl p-10 text-center">
+      <span className="relative flex size-14 items-center justify-center rounded-full border border-cc-purple/50 bg-gradient-to-br from-cc-purple/25 to-cc-teal/10">
+        <Compass
+          className="size-6 animate-spin text-cc-purple motion-reduce:animate-none"
+          style={{ animationDuration: "2.5s" }}
+          aria-hidden="true"
+          strokeWidth={1.75}
+        />
+      </span>
       <p role="status" aria-live="polite" className="text-sm text-cc-muted">
         {STAGES[stageIndex]}
       </p>

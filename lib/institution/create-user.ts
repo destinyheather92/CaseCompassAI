@@ -35,6 +35,10 @@ export interface CreateInstitutionUserInput {
   role: AssignableApiRole;
   username?: string;
   displayName?: string;
+  firstName?: string;
+  lastName?: string;
+  docNumber?: string;
+  housingUnit?: string;
   facilityId?: string;
   internalIdentifier?: string;
 }
@@ -135,6 +139,10 @@ export async function createInstitutionUser(
       accountStatus: "PENDING_FIRST_LOGIN",
       username,
       displayName: input.displayName,
+      firstName: input.firstName,
+      lastName: input.lastName,
+      docNumber: input.docNumber,
+      housingUnit: input.housingUnit,
       internalIdentifier: input.internalIdentifier,
       institutionId: input.institutionId,
       facilityId: input.facilityId,

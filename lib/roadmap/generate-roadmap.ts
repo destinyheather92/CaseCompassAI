@@ -45,6 +45,10 @@ export function generateDeterministicRoadmap(input: GenerateRoadmapInput): Resea
     whyItMatters: step.whyItMatters,
     suggestedActions: step.suggestedActions,
     relatedTerms: step.relatedTerms,
+    category: step.category,
+    priority: step.priority,
+    difficulty: step.difficulty,
+    estimatedMinutes: step.estimatedMinutes,
   }));
 
   return {

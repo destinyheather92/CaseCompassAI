@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireOptionalUser } from "@/lib/auth/authorization";
 import { authorizationFailureResponse } from "@/lib/auth/authorization-http";
+import { isInstitutionAdministrationRole } from "@/lib/auth/institution-permissions";
 import { startIntakeSession } from "@/lib/intake/start-intake-session";
 import { createRateLimiter } from "@/lib/security/rate-limit";
 import { clientIdFor } from "@/lib/security/request-identity";
@@ -17,6 +18,18 @@ export async function POST(request: NextRequest) {
   if (!authResult.ok) {
     const failure = authorizationFailureResponse(authResult.reason);
     return NextResponse.json(failure.body, { status: failure.status });
+  }
+
+  // A legal roadmap belongs only to an individual user or an
+  // institutional inmate — institution administration roles manage the
+  // institution, they are never the subject of one. Enforced here, the
+  // actual creation entry point, since the UI never routing them here
+  // isn't a substitute for a server-side check.
+  if (authResult.user && isInstitutionAdministrationRole(authResult.user.role)) {
+    return NextResponse.json(
+      { status: "forbidden", message: "Institution staff and administrator accounts cannot create a personal intake." },
+      { status: 403 },
+    );
   }
 
   const rateLimitKey = authResult.user?.id ?? clientIdFor(request);

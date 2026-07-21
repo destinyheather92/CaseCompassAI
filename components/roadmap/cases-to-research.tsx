@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { CaseResultCard } from "@/components/roadmap/case-result-card";
-import { CASE_SEARCH_SAFE_ERROR_MESSAGE } from "@/lib/case-search/case-search-constants";
-import type { VerifiedCaseResult } from "@/lib/case-search/types";
+import { classifyAuthority } from "@/lib/case-search/authority-classifier";
+import { CASE_SEARCH_SAFE_ERROR_MESSAGE, NO_CASES_FOUND_MESSAGE } from "@/lib/case-search/case-search-constants";
+import type { VerifiedCaseResult, CaseVerificationStatus } from "@/lib/case-search/types";
 
 type LoadState = "loading" | "ready" | "unavailable" | "error";
 const COURT_LEVELS = [
@@ -16,13 +17,34 @@ const COURT_LEVELS = [
   { value: "supreme", label: "Supreme" },
 ];
 
+const VERIFICATION_FILTERS: { value: "" | CaseVerificationStatus; label: string }[] = [
+  { value: "", label: "Any verification status" },
+  { value: "verified", label: "Verified" },
+  { value: "possible_match", label: "Possible Match" },
+  { value: "not_verified", label: "Not Verified" },
+  { value: "source_unavailable", label: "Source Unavailable" },
+];
+
+const AUTHORITY_FILTERS = [
+  { value: "", label: "Any authority type" },
+  { value: "binding", label: "Binding" },
+  { value: "persuasive", label: "Persuasive" },
+] as const;
+
 /**
  * Retrieval-only — every case shown here came back from a real
  * provider search (GET /api/roadmaps/[roadmapId]/cases). "Find
  * Additional Cases" narrows with structured filters only, never an
  * open-ended AI chat. See docs/behavior/verified-case-search.md.
+ *
+ * `jurisdiction` (the roadmap's own, never a user override — see
+ * lib/case-search/build-roadmap-case-request.ts) is used only to
+ * compute each result's authority badge and to support the authority
+ * filter below; it is never sent to the search endpoint as a
+ * user-changeable value, since jurisdiction always comes from the
+ * roadmap itself (security invariant).
  */
-export function CasesToResearch({ roadmapId }: { roadmapId: string }) {
+export function CasesToResearch({ roadmapId, jurisdiction }: { roadmapId: string; jurisdiction?: string }) {
   const [state, setState] = useState<LoadState>("loading");
   const [message, setMessage] = useState<string | null>(null);
   const [cases, setCases] = useState<VerifiedCaseResult[]>([]);
@@ -31,6 +53,9 @@ export function CasesToResearch({ roadmapId }: { roadmapId: string }) {
   const [publishedOnly, setPublishedOnly] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [searching, setSearching] = useState(false);
+  const [verificationFilter, setVerificationFilter] = useState<"" | CaseVerificationStatus>("");
+  const [authorityFilter, setAuthorityFilter] = useState<"" | "binding" | "persuasive">("");
+  const [topicFilter, setTopicFilter] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +113,22 @@ export function CasesToResearch({ roadmapId }: { roadmapId: string }) {
       setSearching(false);
     }
   }
+
+  const allTopics = useMemo(() => Array.from(new Set(cases.flatMap((c) => c.matchedTopics))), [cases]);
+
+  const visibleCases = useMemo(() => {
+    return cases.filter((caseResult) => {
+      if (verificationFilter && caseResult.verificationStatus !== verificationFilter) return false;
+      if (authorityFilter) {
+        const authority = jurisdiction
+          ? classifyAuthority({ roadmapJurisdiction: jurisdiction, caseJurisdiction: caseResult.jurisdiction, caseCourtId: caseResult.courtId })
+          : null;
+        if (authority !== authorityFilter) return false;
+      }
+      if (topicFilter && !caseResult.matchedTopics.includes(topicFilter)) return false;
+      return true;
+    });
+  }, [cases, verificationFilter, authorityFilter, topicFilter, jurisdiction]);
 
   return (
     <div className="glass-card rounded-2xl p-6">
@@ -147,6 +188,65 @@ export function CasesToResearch({ roadmapId }: { roadmapId: string }) {
         </div>
       )}
 
+      {state === "ready" && cases.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-end gap-4 border-b border-white/[0.06] pb-4">
+          <div>
+            <Label htmlFor="case-verification-filter" className="text-xs text-cc-muted">
+              Verification status
+            </Label>
+            <select
+              id="case-verification-filter"
+              value={verificationFilter}
+              onChange={(event) => setVerificationFilter(event.target.value as typeof verificationFilter)}
+              className="mt-1 block rounded-lg border border-cc-border bg-transparent px-2.5 py-1.5 text-sm text-cc-text"
+            >
+              {VERIFICATION_FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="case-authority-filter" className="text-xs text-cc-muted">
+              Authority type
+            </Label>
+            <select
+              id="case-authority-filter"
+              value={authorityFilter}
+              onChange={(event) => setAuthorityFilter(event.target.value as typeof authorityFilter)}
+              className="mt-1 block rounded-lg border border-cc-border bg-transparent px-2.5 py-1.5 text-sm text-cc-text"
+            >
+              {AUTHORITY_FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {allTopics.length > 0 && (
+            <div>
+              <Label htmlFor="case-topic-filter" className="text-xs text-cc-muted">
+                Roadmap topic
+              </Label>
+              <select
+                id="case-topic-filter"
+                value={topicFilter}
+                onChange={(event) => setTopicFilter(event.target.value)}
+                className="mt-1 block rounded-lg border border-cc-border bg-transparent px-2.5 py-1.5 text-sm text-cc-text"
+              >
+                <option value="">Any topic</option>
+                {allTopics.map((topic) => (
+                  <option key={topic} value={topic}>
+                    {topic}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
+
       {state === "loading" && <p className="mt-4 text-sm text-cc-muted">Loading verified cases…</p>}
 
       {(state === "unavailable" || state === "error") && (
@@ -157,11 +257,16 @@ export function CasesToResearch({ roadmapId }: { roadmapId: string }) {
 
       {state === "ready" && (
         <div className="mt-4 flex flex-col gap-4">
-          {cases.length === 0 ? (
-            <p className="text-sm text-cc-muted">No verified cases found for these filters yet.</p>
+          {visibleCases.length === 0 ? (
+            <p className="text-sm text-cc-muted">{NO_CASES_FOUND_MESSAGE}</p>
           ) : (
-            cases.map((caseResult) => (
-              <CaseResultCard key={`${caseResult.providerName}-${caseResult.providerCaseId}`} caseResult={caseResult} roadmapId={roadmapId} />
+            visibleCases.map((caseResult) => (
+              <CaseResultCard
+                key={`${caseResult.providerName}-${caseResult.providerCaseId}`}
+                caseResult={caseResult}
+                roadmapId={roadmapId}
+                roadmapJurisdiction={jurisdiction}
+              />
             ))
           )}
         </div>

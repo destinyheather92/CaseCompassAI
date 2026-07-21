@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireAuthenticatedUser } from "@/lib/auth/authorization";
 import { authorizationFailureResponse } from "@/lib/auth/authorization-http";
+import { INSTITUTION_MANAGEMENT_ROLES } from "@/lib/auth/institution-permissions";
 import { resetInstitutionUserPassword } from "@/lib/institution/reset-user-password";
 
 export const runtime = "nodejs";
 
 export async function POST(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const authResult = await requireAuthenticatedUser({ roles: ["INSTITUTION_ADMIN"] });
+  const authResult = await requireAuthenticatedUser({ roles: INSTITUTION_MANAGEMENT_ROLES });
   if (!authResult.ok) {
     const failure = authorizationFailureResponse(authResult.reason);
     return NextResponse.json(failure.body, { status: failure.status });

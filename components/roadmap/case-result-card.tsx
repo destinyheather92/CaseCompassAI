@@ -1,12 +1,31 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { LATER_HISTORY_NOT_CHECKED_NOTICE } from "@/lib/case-search/case-search-constants";
+import { classifyAuthority } from "@/lib/case-search/authority-classifier";
 import type { VerifiedCaseResult } from "@/lib/case-search/types";
 
 type SaveState = "idle" | "saving" | "saved" | "already-saved" | "error";
+
+const VERIFICATION_BADGE_LABELS: Record<VerifiedCaseResult["verificationStatus"], string> = {
+  verified: "Verified",
+  possible_match: "Possible Match",
+  not_verified: "Not Verified",
+  source_unavailable: "Source Unavailable",
+};
+
+const VERIFICATION_BADGE_VARIANTS: Record<VerifiedCaseResult["verificationStatus"], "default" | "secondary" | "outline"> = {
+  verified: "default",
+  possible_match: "secondary",
+  not_verified: "outline",
+  source_unavailable: "outline",
+};
+
+const AUTHORITY_LABELS = { binding: "Binding", persuasive: "Persuasive" } as const;
 
 /**
  * Every field rendered here comes directly from a verified provider
@@ -14,9 +33,30 @@ type SaveState = "idle" | "saving" | "saved" | "already-saved" | "error";
  * relevanceSummary is deliberately cautious language, never a claim
  * that this case proves or guarantees anything about the user's
  * situation. See docs/behavior/verified-case-search.md.
+ *
+ * `roadmapJurisdiction` is optional — when provided, an authority badge
+ * (Binding/Persuasive) is shown, computed only from reliable
+ * jurisdiction metadata (see lib/case-search/authority-classifier.ts).
+ * No badge is shown at all when the relationship can't be determined,
+ * rather than guessing.
  */
-export function CaseResultCard({ caseResult, roadmapId }: { caseResult: VerifiedCaseResult; roadmapId?: string }) {
+export function CaseResultCard({
+  caseResult,
+  roadmapId,
+  roadmapJurisdiction,
+}: {
+  caseResult: VerifiedCaseResult;
+  roadmapId?: string;
+  roadmapJurisdiction?: string;
+}) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const authority = roadmapJurisdiction
+    ? classifyAuthority({
+        roadmapJurisdiction,
+        caseJurisdiction: caseResult.jurisdiction,
+        caseCourtId: caseResult.courtId,
+      })
+    : null;
 
   async function handleSave() {
     setSaveState("saving");
@@ -63,9 +103,15 @@ export function CaseResultCard({ caseResult, roadmapId }: { caseResult: Verified
             {caseResult.decisionDate ? ` · ${caseResult.decisionDate}` : ""}
           </p>
         </div>
-        <Badge variant={caseResult.publicationStatus === "published" ? "default" : "outline"}>
-          {caseResult.publicationStatus}
-        </Badge>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <Badge variant={VERIFICATION_BADGE_VARIANTS[caseResult.verificationStatus]}>
+            {VERIFICATION_BADGE_LABELS[caseResult.verificationStatus]}
+          </Badge>
+          {authority && <Badge variant="outline">{AUTHORITY_LABELS[authority]}</Badge>}
+          <Badge variant={caseResult.publicationStatus === "published" ? "default" : "outline"}>
+            {caseResult.publicationStatus}
+          </Badge>
+        </div>
       </div>
 
       <p className="mt-3 text-xs text-cc-teal">{caseResult.relevanceSummary}</p>
@@ -85,13 +131,19 @@ export function CaseResultCard({ caseResult, roadmapId }: { caseResult: Verified
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Link
+          href={`/dashboard/cases/${caseResult.providerCaseId}`}
+          className={buttonVariants({ size: "sm" })}
+        >
+          View Case
+        </Link>
         <a
           href={caseResult.sourceUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-xs font-medium text-cc-purple hover:underline"
+          className={buttonVariants({ size: "sm", variant: "outline" })}
         >
-          View on {caseResult.sourceName}
+          View Source
         </a>
         <Button type="button" size="sm" variant="outline" onClick={handleSave} disabled={saveState === "saving" || saved}>
           {saved ? "Saved" : saveState === "saving" ? "Saving…" : "Save Case"}

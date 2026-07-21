@@ -7,8 +7,8 @@ const content: ResearchRoadmapContent = {
   summary: "s",
   jurisdiction: { label: "South Carolina", code: "SC", limitationNote: "n" },
   steps: [
-    { id: "step-1", order: 1, title: "Understand Habeas Corpus", description: "d", whyItMatters: "w", suggestedActions: [], relatedTerms: ["Habeas Corpus"] },
-    { id: "step-2", order: 2, title: "Review Appeal Deadlines", description: "d", whyItMatters: "w", suggestedActions: [], relatedTerms: ["Appellant"] },
+    { id: "step-1", order: 1, title: "Understand Habeas Corpus", description: "d", whyItMatters: "w", suggestedActions: [], relatedTerms: ["Habeas Corpus"], category: "getting-started", priority: "essential", difficulty: "beginner", estimatedMinutes: 5 },
+    { id: "step-2", order: 2, title: "Review Appeal Deadlines", description: "d", whyItMatters: "w", suggestedActions: [], relatedTerms: ["Appellant"], category: "procedural-steps", priority: "recommended", difficulty: "intermediate", estimatedMinutes: 6 },
   ],
   legalTerms: [],
   sourceSuggestions: [],

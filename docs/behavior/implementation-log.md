@@ -2,6 +2,214 @@
 
 Append-only. Add a new dated entry per completed behavior — don't edit past entries except to fix a factual error.
 
+## 2026-07-21 — Verified case retrieval and source attribution (citation verification, citation graph, normalized storage, authority classification)
+
+### Expected Behavior
+
+Replace the "Verified case search is not available yet" placeholder with a real, source-backed case research experience: citation verification as a guardrail before any "Verified" label, a citation graph (citing/cited cases, never claiming more than "cited"), normalized persisted storage separating source content from AI content, a full source-attribution panel, authority (binding/persuasive) labeling, and dashboard filters — while never inventing a case, citation, quote, or holding.
+
+### Root Cause (identified before any implementation, per this project's standing discipline)
+
+Inspected first, not assumed: the CourtListener search/opinion-text integration already existed and was unit-tested; the placeholder is `case-search-service.ts`'s intentional behavior when `CASE_SEARCH_PROVIDER=none` (the default) and no `COURTLISTENER_API_TOKEN` is configured in this environment — not a missing feature. What was genuinely missing: citation verification, the citation graph, a 4-state verification model (the old type only had `"verified"`), normalized durable storage (previously in-memory-only), authority/jurisdiction labeling, quotation location tracking, and the full source-attribution/content-separation UI the new spec requires. Confirmed CourtListener's *current* v4 API for the two genuinely new endpoints (citation-lookup, opinions-cited) against Free Law Project's live documentation before writing any code against them — not assumed from training data.
+
+### Implementation
+
+**Provider layer** (`lib/case-search/courtlistener-provider.ts`, `types.ts`): `CaseVerificationStatus` expanded to `verified | possible_match | not_verified | source_unavailable`; `VerifiedCaseResult` gained `clusterId`, `citations[]`, `courtId`, `originalCollection`, `verificationMethod`. New `verifyCitation()` (real `POST /citation-lookup/`, mapping CourtListener's documented per-citation status codes 200/300/404/400/429) and `getCitingCases()`/`getCitedCases()` (real `GET /opinions-cited/?cited_opinion=`/`?citing_opinion=`, hydrating up to 10 related cases, always `treatment: "cited"` — a type that structurally excludes any stronger claim). `lib/case-search/case-id-schema.ts` validates every provider case id and citation string before it reaches a URL (SSRF/path-injection defense — invariant #67).
+
+**Service layer** (`case-search-service.ts`): `verifyCaseCitation()` and `getCaseCitationGraph()`, both validating input and mapping every provider failure to a safe message, never a raw upstream error.
+
+**Storage** (migration `20260721093603_legal_case_storage`): new `LegalCaseRecord` (normalized source record, upserted when a case is opened in detail) and `CaseExplanationRecord` (AI content, always a separate table with an FK, keyed by a `sourceTextHash` so a cached explanation is invalidated if the underlying opinion text ever changes) — `lib/case-explainer/case-explanation-store.ts`. `explainCase()` now checks in-memory cache → durable storage → provider+AI, in that order.
+
+**Quotation provenance**: `verify-quotes.ts`'s `VerifiedQuote` adds a `location` (character offset + best-effort paragraph number) computed only for quotes that survive verification — the AI is never asked for a location, so it can't invent one (invariant #68). A new `VerifiedCaseExplanation` type (distinct from the AI-facing `CaseExplanation`) carries this through the type system so it's never confused with the model's raw, unverified output.
+
+**Authority classification** (`lib/case-search/authority-classifier.ts`): conservative by design — `binding` only for an exact jurisdiction/court match or U.S. Supreme Court, `persuasive` otherwise, `null` (no label) whenever the relationship can't be determined from reliable metadata. Never inferred from shared subject matter.
+
+**UI**: `components/case-explainer/source-attribution-panel.tsx` (full required field set — source, case, citation, court, decision date, docket number, provider case ID, verification status/method, retrieved timestamp, CAP notice when applicable, "View source opinion" link) and `citation-graph-section.tsx` (citing/cited lists) added to `case-detail-view.tsx`; the Plain-Language Guide now carries a single prominent `AI_EXPLANATION_LABEL`/`AI_EXPLANATION_DISCLAIMER` banner and each quote is labeled "Quotation from the opinion" with its paragraph location. `CaseResultCard` gained a verification badge (4-state) and an optional authority badge; its "Read This Case"/"View on {source}" links became "View Case"/"View Source" buttons per the spec's naming. `CasesToResearch` gained client-side verification-status/authority-type/roadmap-topic filters (never a server-side jurisdiction override — that stays roadmap-derived only) and now threads the roadmap's own jurisdiction through for authority classification.
+
+**Wording**: `case-search-constants.ts` centralized the spec's exact required strings (`NO_CASES_FOUND_MESSAGE`, `CITATION_NOT_VERIFIED_MESSAGE`, `OPINION_TEXT_UNAVAILABLE_MESSAGE`, updated `LATER_HISTORY_NOT_CHECKED_NOTICE`) — updating existing test assertions that had checked the older, looser wording.
+
+New routes: `POST /api/cases/verify-citation`, `GET /api/cases/[caseId]/citing`, `GET /api/cases/[caseId]/cited`.
+
+### Verification
+
+- `npx vitest run` (full suite): **136 test files, 941 tests, all passed**
+- `npx tsc --noEmit`: clean
+- `npx eslint .`: clean
+- One env-gated test file (`tests/integration/case-search/courtlistener-live.test.ts`) calls the real CourtListener API — skipped by default (`RUN_LIVE_COURTLISTENER_TESTS` unset in this environment), confirmed to skip cleanly rather than fail
+
+### Known Limitations
+
+See `docs/behavior/verified-case-search.md`'s "Known limitations" section — unchanged core limitation (no live CourtListener token in this environment) plus new ones specific to this phase: only CourtListener is implemented (vLex/Fastcase/Westlaw/Lexis are named types with zero implementation), no real citator (so citation-graph entries are always "cited," never a stronger treatment), and authority classification doesn't model federal circuit hierarchies.
+
+---
+
+## 2026-07-21 — Facility-admin routing fix, Clerk-sync lazy fallback, and institution-staff rollback
+
+### Expected Behavior
+
+A facility administrator who completes mandatory first-login password setup must land on `/institution/dashboard`, never the legal intake flow — they are never the subject of a legal research roadmap. Separately, a real signed-in Clerk user must never be told "Please sign in to continue." Separately again: the institutional system was rolled back from two institution-side roles (admin + staff) to exactly one (admin only), per explicit product direction that arrived after the staff role had already shipped.
+
+### Root Causes (identified before any fix, per this project's standing discipline)
+
+1. **Facility-admin routing bug**: `app/api/auth/first-login-password/route.ts` returned a hard-coded `redirectTo: "/get-started"` for every successful password change, regardless of role.
+2. **"Please sign in to continue" for a real signed-in user**: `CLERK_WEBHOOK_SIGNING_SECRET` is empty in this environment (confirmed by inspection, not assumed) — the `user.created` webhook that syncs a new Clerk sign-up into the Prisma `User` table has never been reachable, so a real individual sign-up had no matching Prisma row and `loadAppUserByClerkId` correctly-but-unhelpfully reported `account-not-found`, which `authorizationFailureResponse` maps to the generic sign-in message.
+
+### Implementation
+
+**Routing fix**: new `lib/auth/post-password-setup-redirect.ts`'s `getPostPasswordSetupRoute()` is now the single source of truth for post-password-setup routing — `INSTITUTION_ADMIN` always goes to `/institution/dashboard`; `INCARCERATED_USER` is routed by their own actual intake/roadmap status (`/get-started` if nothing confirmed yet, `/dashboard` otherwise, reusing the dashboard's own already-correct status logic rather than duplicating it); every other role keeps the original unconditional `/get-started` (no product decision distinguishes `EDUCATOR`/`LEGAL_AID_STAFF`, and `INDIVIDUAL` never reaches this path at all — invariant #62). Both `app/api/auth/first-login-password/route.ts` and `app/first-login/page.tsx`'s already-done-so-bounce-onward branch now call this instead of hard-coding a destination.
+
+Also added the authorization-side half of the same fix, since a UI never routing an admin to intake isn't a substitute for a server check: `isInstitutionAdministrationRole()` (`lib/auth/institution-permissions.ts`) now gates `POST /api/intake/interview/start`, rejecting an `INSTITUTION_ADMIN` actor before any session is created — see security-invariants.md #63.
+
+**Clerk-sync lazy fallback**: `loadAppUserByClerkId` (`lib/auth/authorization.ts`) now calls the same `syncIndividualUserFromClerk()` upsert the webhook uses when no Prisma row is found for a verified Clerk session, rather than treating a real signed-in user as unauthenticated. Provably safe: it can only ever create an `INDIVIDUAL` account (never a role/institution a client could influence), and institution-managed users always have their row created synchronously at account-creation time — before they're ever issued credentials — so this path never applies to them. The webhook remains the primary, faster sync path; this is the fallback for exactly the environment described above.
+
+**Institution-staff rollback**: the `INSTITUTION_STAFF` role (added in the 2026-07-19 institutional-onboarding phase, at explicit user request) was fully removed after a later, explicit instruction that the institutional system should have exactly two account kinds — facility administrator and institutional inmate — with no staff directory, invitations, or staff-specific permissions. Confirmed zero live rows used the role before dropping it (migration `20260721084109_remove_institution_staff_role`, the standard Postgres create-new-enum/swap/drop-old pattern). Reverted: `institution-schema.ts`'s assignable-role set and the now-removed `ADMIN_ONLY_ASSIGNABLE_ROLES`/actor-role-check mechanism in `create-user.ts`; `institution-permissions.ts`'s `INSTITUTION_MANAGEMENT_ROLES` back to a single role; `institution-nav-items.ts`/`InstitutionShell`/`InstitutionSidebar`/`InstitutionMobileNav` no longer thread a `role` prop at all (there is only one possible value now); `UserManagement`'s staff-role create option and `actorRole` prop. All staff-specific tests removed rather than left disabled.
+
+### Verification
+
+- `npx vitest run` (full suite): **130 test files, 877 tests, all passed**
+- `npx tsc --noEmit`: clean
+- `npx eslint .`: clean
+
+### Known Limitations
+
+- `CLERK_WEBHOOK_SIGNING_SECRET` is still not registered in a live Clerk Dashboard in this environment — the lazy-sync fallback closes the practical gap, but the webhook path itself remains unverified end-to-end here (same limitation documented since 2026-07-15).
+
+---
+
+## 2026-07-19 — Dashboard visual redesign + roadmap presentation (progress, categories, priority, badges, expandable sections)
+
+### Expected Behavior
+
+The user dashboard should feel like a polished product — clear sections with headers, better spacing/whitespace, and a wider layout — rather than a flat grid of same-weight cards. Roadmap steps should show priority, difficulty, and estimated reading time; group into expandable categories; and the roadmap page should show an overall progress summary, not just a per-step status toggle.
+
+### Security Reason
+
+Purely a presentation-layer change — no new trust boundary. The one thing worth stating: `category`/`priority`/`difficulty`/`estimatedMinutes` are hand-authored per step in `roadmap-step-templates.ts`, the same deterministic, no-AI-invention discipline as every other field in that file (cross-referenced glossary terms, etc.) — never computed/guessed at render time.
+
+### Tests Added
+
+- `tests/unit/roadmap/group-steps-by-category.test.ts`
+- `tests/components/roadmap/roadmap-progress-summary.test.tsx`, `roadmap-category-section.test.tsx`
+- `tests/components/roadmap/roadmap-step-card.test.tsx` (extended: priority/difficulty/reading-time badges, completed-badge-on-status-change)
+- Updated fixtures in `tests/unit/roadmap/roadmap-schema.test.ts`, `tests/integration/dashboard/get-user-roadmaps.test.ts`, `tests/unit/case-search/build-roadmap-case-request.test.ts` for the new required step fields
+
+### Implementation
+
+**Schema/data**: `RoadmapStepSchema` (`lib/roadmap/roadmap-schema.ts`) and the hand-written `ResearchRoadmapStep` interface (`types/roadmap.ts` — a separate, structurally-mirrored type from the Zod-inferred one, both needed updating) gained `category` (`getting-started | legal-concepts | procedural-steps | case-documentation`), `priority` (`essential | recommended | optional`), `difficulty` (`beginner | intermediate | advanced`), and `estimatedMinutes`. All 18 steps across the 6 case-type templates in `lib/roadmap/roadmap-step-templates.ts` were hand-authored with these values (e.g., an orientation step is always `getting-started`/`essential`/`beginner`; a deeper legal-concept step is `legal-concepts` and often `intermediate`/`advanced`). `generate-roadmap.ts` passes the new fields straight through; `get-roadmap-detail.ts`'s step-mapping already spread the full step object, so no logic change was needed there beyond the type declaration.
+
+**Roadmap detail page**: new `lib/roadmap/group-steps-by-category.ts` (fixed category display order, not alphabetical/insertion order — a research sequence should read getting-started → legal-concepts → procedural-steps → case-documentation regardless of which categories a given roadmap actually uses), `components/roadmap/roadmap-progress-summary.tsx` (page-level percent-complete bar + completed/in-progress counts), `components/roadmap/roadmap-category-section.tsx` (collapsible, open by default, header shows category label + completed-of-total count). `RoadmapStepCard` gained a badges row (priority, difficulty, "~N min read") and a small "Completed" indicator next to the step number when its local status is completed.
+
+Scope decision made explicitly rather than silently: "expandable sections" was interpreted as category-level collapse (a new page-level grouping), not collapsing each individual step's body — the existing `RoadmapStepCard` tests assert its full content (description, actions, related terms, note field) is immediately visible without an expand action, and collapsing per-step content by default would have been a much larger, riskier behavioral change for a request that reads more naturally as being about organizing many steps into scannable groups. Likewise, "clear distinction between completed and upcoming" was implemented as a visual/badge distinction rather than physically reordering completed steps out of sequence, since the step order encodes a deliberate research sequence that reordering would obscure.
+
+**Dashboard overview** (`app/dashboard/page.tsx`): widened from `max-w-5xl` to `max-w-6xl`; reorganized the flat two-column card grid into labeled sections ("Overview," "Research," "What's Next," "Learn More," "Recent Activity") with uppercase eyebrow headers, matching the section-header pattern already used inside individual cards; `DashboardShell`'s main content padding increased (`py-8`→`py-10`, `px-8`→`px-10` at `lg`) for more breathing room. `WelcomeHeader`, `ResearchStatusCard` (now a larger, radial-gradient-accented hero-style card), and `DashboardEmptyState` got larger type/spacing/icon-badge treatment for more visual presence as the page's first impression.
+
+### Verification
+
+- `npx vitest run` (full suite): **128 test files, 836 tests, all passed**
+- `npx tsc --noEmit`: clean
+- `npx eslint .`: clean
+- `npx next build`: clean production build
+
+### Known Limitations
+
+- The roadmap page's progress summary and each category section's completed-of-total count reflect step status as of page load — a step status change (via `RoadmapStepCard`'s own local state, which is what actually calls the PATCH endpoint) doesn't live-update the page-level summary without a refresh. This matches the existing pattern elsewhere in the dashboard (e.g. `RoadmapProgressCard`'s percentage is also computed server-side, not live-synced) rather than being a new gap introduced here.
+
+---
+
+## 2026-07-19 — Institutional onboarding: homepage split, self-service registration, staff role, archive, richer dashboard
+
+### Expected Behavior
+
+A visitor to the homepage now sees two distinct paths — Individual User and Correctional Facility/Institution — from the very first section below the hero, each with its own "Get Started" CTA. Choosing the institution path leads to a public, self-service registration form that provisions a live institution and its first admin account immediately (no approval queue, an explicit product decision). Institutions get a real navigation shell (`/institution/dashboard`, `/institution/users`, `/institution/reports`, `/institution/roadmaps`, `/institution/settings`), a second institution role (`INSTITUTION_STAFF`, distinct from `INSTITUTION_ADMIN` only in that staff cannot create fellow staff/admin accounts or view settings), an `ARCHIVED` account state distinct from temporary deactivation, and inmate-specific account fields (first/last name, DOC number, housing unit).
+
+### Security Reason
+
+Two new categories of risk: (1) a second, *public*, unauthenticated endpoint that creates real accounts (`/api/institution/register`) — rate-limited and, per explicit product decision, unapproved, so the audit trail (`institution_registered` event) and the review-after-the-fact expectation are the actual safety net, not sign-up gating; (2) a second institution-side role whose entire purpose is a *narrower* permission set than the existing admin role — the risk is staff quietly gaining admin-equivalent power through a missed check, which is why the one permission delta (assigning `institution-staff`) is enforced by comparing the acting user's own server-derived role, never a client-supplied flag, and has a dedicated regression test proving a staff actor is rejected.
+
+### Tests Added (all red before implementation)
+
+- `tests/unit/auth/institution-schema.test.ts` (extended), `tests/unit/institution/institution-nav-items.test.ts`
+- `tests/integration/institution/create-user.test.ts` (extended: institution-staff assignment, forbidden-role-assignment, new fields), `register-institution.test.ts`, `register-route.test.ts`, `get-institution-dashboard-overview.test.ts`, `list-institution-roadmaps.test.ts`
+- `tests/components/institution/user-management.test.tsx` (extended: archive, new fields, staff-role gating, search), `institution-register-form.test.tsx`
+- `tests/components/site/choose-path.test.tsx`
+
+### Implementation
+
+**Schema** (migration `20260719205040_institution_onboarding`): `UserRole` gained `INSTITUTION_STAFF`; `AccountStatus` gained `ARCHIVED`; new `InstitutionType` enum (open-ended via `OTHER` + `institutionTypeOther` freeform label, so a new institution category never needs an enum migration); `Institution` gained the registration-form profile fields (`institutionType`, `organizationName`, `address`, `contactName/Title/Email/Phone`, `estimatedPopulation`, `estimatedUsers`); `User` gained `firstName`, `lastName`, `docNumber`, `housingUnit` (indexed, since housing-unit filtering was explicitly requested as "future-ready").
+
+**RBAC**: `lib/auth/institution-permissions.ts`'s `INSTITUTION_MANAGEMENT_ROLES` is now the shared gate on every institution route/page (previously `INSTITUTION_ADMIN`-only). `createInstitutionUser` gained an `actorRole` parameter and a `forbidden-role-assignment` result — `institution-staff` is schema-assignable but only usable by an `INSTITUTION_ADMIN` actor. `AppUser.accountStatus`/`AuthorizationFailureReason` extended for `ARCHIVED`/`account-archived` throughout `lib/auth/authorization.ts` and `authorization-http.ts`.
+
+**Self-service registration**: `lib/institution/register-institution-schema.ts` + `register-institution.ts` (mirrors `create-user.ts`'s injectable-Clerk-creator DI pattern) + `POST /api/institution/register` (rate-limited 5/min/IP via `clientIdFor`, guest-reachable) + `app/institution/register/page.tsx` / `components/institution/institution-register-form.tsx` (credentials shown once, same UX as staff-created accounts). This is the second legitimate direct-`INSTITUTION_ADMIN`-creation path alongside `prisma/seed.ts` — documented explicitly since the existing `create-user.ts` comment claimed to be the *only* one.
+
+**Archive**: `change-user-status.ts`'s `UserStatusAction` gained `"archive"` (bans Clerk identity like deactivate, sets `ARCHIVED`); `reactivate` now works from either `DISABLED` or `ARCHIVED`.
+
+**Institution portal restructure**: moved `app/institution/{dashboard,users}` into a new `app/institution/(portal)/` route group (URLs unchanged) with its own `layout.tsx` doing the real auth check + rendering `InstitutionShell`/`InstitutionSidebar`/`InstitutionMobileNav` (mirrors the individual dashboard's shell/sidebar/mobile-nav pattern exactly) — `/institution/login` and the new `/institution/register` stay siblings outside the group so they remain reachable signed-out. New `lib/institution/institution-nav-items.ts` (role-aware: Institution Settings only for admin) backing the nav. New pages: `/institution/reports` (aggregate counts, at-a-glance layout), `/institution/roadmaps` (title/owner/date only, via `list-institution-roadmaps.ts` — never step content), `/institution/settings` (read-only profile view, admin-only).
+
+**Dashboard overview**: `lib/institution/get-institution-dashboard-overview.ts` replaces the old inline 4-stat query with total/active/pending/archived account counts, intake/roadmap aggregate counts, a recent-logins list, and system notices (inactive-institution warning, pending-first-login count) — still strictly aggregate-only, no private research content.
+
+**User management UI**: new create-form fields (first/last name, DOC number, housing unit), a search box wired to the existing `?search=` param, an "Institution Staff" role option gated by `actorRole === "INSTITUTION_ADMIN"` (passed down from the server-rendered page, which already knows the caller's real role), and an "Archive" action alongside Deactivate/Reactivate (button label switches to "Reactivate" for either `DISABLED` or `ARCHIVED`).
+
+**Homepage**: new `components/site/choose-path.tsx` — a dedicated "How will you use CaseCompass?" section placed directly below the Hero, two cards (Individual → `/get-started`, Institution → `/institution/register`), each with its own "Get Started" CTA, matching the request's exact copy. `ForFacilities`'s previously-dead `#get-started` anchor CTA repointed to `/institution/register` (the closest real equivalent to "request a demo" now that self-service registration exists) — same category of fix as the earlier Hero CTA repoint, not a redesign.
+
+Explicit scope decision **not** taken this phase, stated rather than silently skipped: the request's "Future Scalability" section asks for `User`/`Institution`/`Membership`/`Role`/`Permission` as fully separate concepts (implying a many-to-many membership table). The current single `institutionId` FK on `User` satisfies every concrete requirement in this request and doesn't block adding a join table later; a speculative rearchitecture now, with no current multi-institution-membership requirement to test against, was judged premature.
+
+### Verification
+
+- `npx vitest run` (full suite): **125 test files, 823 tests, all passed**
+- `npx tsc --noEmit`: clean
+- `npx eslint .`: clean
+- `npx next build`: clean production build; confirmed the `(portal)` route group resolves to the same URLs (`/institution/dashboard`, `/institution/users`, etc.) as before the restructure, and all new routes (`/institution/register`, `/institution/reports`, `/institution/roadmaps`, `/institution/settings`, `/dashboard/cases/[caseId]`) compile
+- `proxy.ts` matcher extended for `/institution/reports(.*)` and `/institution/roadmaps(.*)`; `/institution/register` and `/institution/login` deliberately left out
+
+### Known Limitations
+
+- Self-service registration has no approval gate (explicit product decision, not an oversight) — see docs/behavior/institutional-accounts.md.
+- `/institution/settings` is read-only; no edit form yet.
+- `/institution/reports` is a first, honest cut — the same aggregate counts as the dashboard, not yet a distinct reporting feature (trends, per-facility breakdowns).
+- No facility-scoped staff role — `INSTITUTION_STAFF` is institution-wide, same scope as `INSTITUTION_ADMIN` today, differing only in the two admin-only actions described above.
+- Housing-unit filtering exists at the data/API layer (`list-users.ts`) but has no dedicated UI filter control yet — only the search box, which also matches DOC number/name/username.
+
+---
+
+## 2026-07-19 — Verified case reading experience (plain-language explanation + original opinion)
+
+### Expected Behavior
+
+Replace the flat "verified case search" result list with an actual reading experience: click a case, see the original opinion text and a structured plain-language breakdown (summary, facts, issues, holding, reasoning, rule of law, why it matters, how it might relate, important quotes, key terms), toggle between the two, with quotes highlighted in the original text.
+
+### Security Reason
+
+This is the highest-fabrication-risk surface added so far: an AI model summarizing a real legal document, where a hallucinated quote or holding would be indistinguishable from a real one to a reader without legal training. The core invariant is that nothing shown as "from this case" can actually be invented — enforced two ways: the system prompt instructs the model to work only from the given text (or admit when it wasn't given any), and, more importantly, every quote the model returns is independently re-verified server-side as an actual substring of the real opinion text before it's ever shown — the model's own claim that a quote is verbatim is never trusted on its own.
+
+### Tests Added (all red before implementation)
+
+- `tests/unit/case-explainer/case-explanation-schema.test.ts`, `verify-quotes.test.ts`, `highlight-opinion-text.test.ts`, `explain-case.test.ts`
+- `tests/unit/ai/case-explainer-system-prompt.test.ts`
+- `tests/unit/case-search/courtlistener-provider.test.ts` (extended: `getOpinionText`)
+- `tests/integration/case-search/case-explain-route.test.ts`
+- `tests/components/case-explainer/case-detail-view.test.tsx`; `tests/components/roadmap/case-result-card.test.tsx` (extended: "Read This Case" link)
+
+### Implementation
+
+New `lib/case-explainer/` (mirrors `lib/intake/` + `lib/ai/providers/*-intake-interviewer.ts`'s exact DI/result-union pattern): `case-explanation-schema.ts`, `verify-quotes.ts`, `highlight-opinion-text.ts`, `explanation-cache.ts` (1-hour in-memory), `explain-case.ts`. New `lib/ai/prompts/case-explainer-system.ts`, `build-case-explainer-input.ts`, `lib/ai/providers/case-explainer-provider.ts` + `openai-case-explainer.ts`. Extended `CaseSourceProvider` (`lib/case-search/types.ts`) with `getOpinionText()`, implemented in `courtlistener-provider.ts` against CourtListener's `/opinions/{id}/` endpoint (`plain_text`, falling back to stripped `html*` fields) — judicial opinion text is a public-domain government work, unlike copyrighted editorial content, so verbatim display with sourcing is safe. New route `app/api/cases/[caseId]/explain/route.ts`, page `app/dashboard/cases/[caseId]/page.tsx`, component `components/case-explainer/case-detail-view.tsx`. `CaseResultCard` gained a "Read This Case" link to the new page.
+
+Result-shape decision made mid-build: `explainCase()` originally collapsed any AI failure into a bare `unavailable` status, which would have hidden the case's own verified metadata and (if available) its original opinion text behind an AI outage — changed to a three-way union (`ok | not-found | explanation-unavailable`) where `explanation-unavailable` still carries the real `caseResult` and `opinionText`, so the UI can always show the verified source even when the AI summary can't be produced; the detail page auto-selects the Original Opinion tab in that case since there's nothing to show on the Plain English tab.
+
+Verified live against the real OpenAI API (temporary script, deleted after use, following this project's standing diagnostic-script convention): with real opinion text, all three quotes the model returned were confirmed present verbatim in the source; with no opinion text given, the model correctly returned zero quotes and an honestly limited, metadata-only summary rather than inventing case-specific facts.
+
+### Verification
+
+- `npx vitest run` (full suite): **118 test files, 783 tests, all passed**
+- `npx tsc --noEmit`: clean
+- `npx eslint .`: clean
+- Live verification against the real OpenAI Responses API (see above)
+
+### Known Limitations
+
+- CourtListener's `getOpinionText` field mapping is unverified against a live account (no `COURTLISTENER_API_TOKEN` configured in this environment) — only the AI explanation logic itself was verified live, using synthetic opinion text.
+- The verbatim-quote check is a deterministic substring match, not semantic — a real quote the model paraphrases even slightly is correctly treated as unverifiable and dropped, which is the intended conservative behavior.
+- No later-history/citator integration (pre-existing limitation, unchanged by this phase).
+
 ## 2026-07-16 — AI intake interview: foundation (schema, env, OpenAI client)
 
 ### Expected Behavior
@@ -333,6 +541,41 @@ Fixed one pre-existing test flake discovered while re-running the full suite mid
 - The dashboard has no pagination for intake/roadmap/activity/saved-item lists — acceptable at this stage given expected per-user volume, but worth revisiting if a single user accumulates a very large history.
 - `User.preferences` (Json, added this phase) has no reader/writer service yet — it exists in the schema for a future non-sensitive-preferences feature (e.g. reduced motion) but nothing currently sets or reads it. Documented rather than silently unused.
 - Editing a saved item's note/metadata after creation isn't supported — only save/remove. A user can achieve the same effect by removing and re-saving.
+
+---
+
+## 2026-07-19 — Intake UI redesign + case-number/date data-loss fix
+
+### Expected Behavior
+
+`/get-started` should look like a polished product, not a bare form. Separately, two user-reported data-loss bugs needed root-causing: a selected date and an entered case number were each reported back later as "not provided," even though the user gave them.
+
+### Security Reason
+
+No new trust boundary here, but the root-cause investigation matters for the "never fabricate/never silently drop user-provided facts" invariant this project holds throughout — a UI that quietly loses what a user typed is a correctness violation with the same user-trust stakes as a security bug, so it got the same "verify empirically against the real dependency, don't guess" treatment as prior security work.
+
+### Tests Added / Updated
+
+- Restyled `components/onboarding/*` verified against their existing 8 test files (60 tests) — zero test changes needed, since accessible names/roles were deliberately preserved through the redesign.
+- `tests/unit/ai/intake-interviewer-system-prompt.test.ts` — three new cases asserting the prompt instructs verbatim case/docket-number and date capture, correct `answerType:"date"` classification, and full-transcript reconciliation of `collectedFactsSummary`/`unresolvedInformation` each turn.
+
+### Implementation
+
+**UI**: new `lib/intake-option-icons.tsx`, `components/onboarding/intake-progress.tsx` (phase stepper), `components/onboarding/intake-shell.tsx` (shared background/header/progress wrapper, entrance-only `motion.div` per step — deliberately no `AnimatePresence`, since a timed exit transition would race the synchronous `userEvent.click()` assertions in `get-started-page.test.tsx`). Every existing onboarding component restyled to use `glass-card`/gradient tokens already established in `components/site/hero.tsx`, with per-option icons and card-style selectable rows; `adaptive-question.tsx`'s single/multiple-choice rows now wrap the control inside `<Label>` for a fully clickable card.
+
+**Root cause of the data-loss reports**: found by writing a standalone script that called the real OpenAI Responses API through the exact production code path (`INTAKE_INTERVIEWER_SYSTEM_PROMPT` + `buildIntakeInterviewInput` + `IntakeInterviewResponseSchema`) with a simulated answer volunteering both a case number and a date. Result: the date was captured correctly, but the case number was consistently paraphrased away ("the user provided a case number") instead of copied verbatim into `collectedFactsSummary` — the actual number never appeared anywhere in the AI's own running summary. The system prompt's blanket "don't repeat sensitive information" instruction, combined with zero explicit guidance on verbatim-preserving identifiers, was the cause — not a bug in persistence (the raw answer text was already confirmed, via existing tests, to be saved to `IntakeAnswer.answerText` verbatim regardless of what the AI does with it) and not a bug in `lib/dashboard/timeline-mapper.ts`'s ISO-date handling (confirmed correct by its existing tests, and the native `<input type="date">` already always yields ISO `yyyy-mm-dd`). Fixed by adding four explicit instructions to `lib/ai/prompts/intake-interviewer-system.ts`: case/docket/filing numbers are public record identifiers, not the sensitive-PII category the prompt was warning about; copy specific numbers and dates into `collectedFactsSummary` verbatim, never generalized; use `answerType:"date"` for date-eliciting questions; and recompute `collectedFactsSummary`/`unresolvedInformation` from the full prior transcript every turn rather than carrying stale state forward. Re-ran the same live diagnostic after the fix — the case number now appears verbatim in the summary.
+
+Also confirmed via code reading that `generateDeterministicRoadmap` never consumes `factualSummary` at all (template-based on case type/jurisdiction/stage/goals only) — so the fix's effect is scoped to the AI's own review-screen summary and the dashboard timeline, not the roadmap content itself, which by design never claims case-specific facts.
+
+### Verification
+
+- `npx vitest run tests/unit/ai tests/unit/dashboard/timeline-mapper.test.ts tests/integration/intake tests/components/onboarding`: **21 test files, 185 tests, all passed**
+- `npx tsc --noEmit`: clean
+- Live re-run of the diagnostic script against the real OpenAI API after the fix, confirming the case number now appears verbatim in `collectedFactsSummary` (temporary script deleted after use, per this project's convention)
+
+### Known Limitations
+
+- The verbatim-capture fix is a prompt instruction, not a deterministic guarantee — it materially reduces the failure rate (confirmed by direct re-test) but, like any LLM-following-instructions behavior, isn't provably 100% reliable the way the underlying DB persistence already is. The DB-level `IntakeAnswer.answerText` remains the authoritative, always-correct record regardless of what the AI's summary says.
 
 ---
 

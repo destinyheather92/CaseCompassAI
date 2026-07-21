@@ -54,9 +54,14 @@ describe("requirePasswordChangeComplete", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("blocks a user with mustChangePassword=true and redirects to /first-login", () => {
-    const result = requirePasswordChangeComplete(makeUser({ mustChangePassword: true }));
+  it("blocks an institution-managed user with mustChangePassword=true and redirects to /first-login", () => {
+    const result = requirePasswordChangeComplete(makeUser({ role: "INCARCERATED_USER", mustChangePassword: true }));
     expect(result).toEqual({ ok: false, reason: "must-change-password", redirectTo: "/first-login" });
+  });
+
+  it("never blocks an INDIVIDUAL account — the temporary-password lifecycle is institution-only, even if mustChangePassword is somehow true", () => {
+    const result = requirePasswordChangeComplete(makeUser({ role: "INDIVIDUAL", mustChangePassword: true }));
+    expect(result.ok).toBe(true);
   });
 });
 

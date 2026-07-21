@@ -35,32 +35,58 @@ export default async function DashboardOverviewPage({
   const casesPreview = overview.activeRoadmap ? await getDashboardCasesPreview(overview.activeRoadmap.id) : [];
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6">
+    <div className="mx-auto flex max-w-6xl flex-col gap-10">
       {saved === "intake" && (
         <div role="status" aria-live="polite" className="glass-card rounded-xl border border-cc-teal/40 p-3 text-sm text-cc-text">
           Your intake progress has been saved.
         </div>
       )}
-      <WelcomeHeader />
-      <ResearchStatusCard researchStatus={overview.researchStatus} primaryAction={overview.primaryAction} />
+
+      <div className="flex flex-col gap-6">
+        <WelcomeHeader />
+        <ResearchStatusCard researchStatus={overview.researchStatus} primaryAction={overview.primaryAction} />
+      </div>
 
       {overview.activeIntake === null ? (
         <DashboardEmptyState />
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div className="flex flex-col gap-6 lg:col-span-2">
+        <>
+          <section className="flex flex-col gap-4">
+            <h2 className="text-xs font-semibold tracking-[0.15em] text-cc-muted uppercase">Overview</h2>
             <IntakeSummaryCard intake={overview.activeIntake} />
-          </div>
-          {overview.activeRoadmap && <RoadmapProgressCard roadmap={overview.activeRoadmap} />}
-          {overview.activeRoadmap && <VerifiedCasesPreview roadmapId={overview.activeRoadmap.id} cases={casesPreview} />}
-          <UnresolvedQuestionsCard unresolvedInformation={overview.unresolvedInformation} />
-          <IntakeTimeline timeline={overview.timeline} />
-          <LegalTermsCard legalTerms={overview.legalTerms} />
-          <RecommendedResources resources={overview.recommendedResources} />
-          <div className="lg:col-span-2">
+          </section>
+
+          {overview.activeRoadmap && (
+            <section className="flex flex-col gap-4">
+              <h2 className="text-xs font-semibold tracking-[0.15em] text-cc-muted uppercase">Research</h2>
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <RoadmapProgressCard roadmap={overview.activeRoadmap} />
+                <VerifiedCasesPreview roadmapId={overview.activeRoadmap.id} cases={casesPreview} />
+              </div>
+            </section>
+          )}
+
+          <section className="flex flex-col gap-4">
+            <h2 className="text-xs font-semibold tracking-[0.15em] text-cc-muted uppercase">What&apos;s Next</h2>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <UnresolvedQuestionsCard unresolvedInformation={overview.unresolvedInformation} />
+              <IntakeTimeline timeline={overview.timeline} />
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-4">
+            <h2 className="text-xs font-semibold tracking-[0.15em] text-cc-muted uppercase">Learn More</h2>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <LegalTermsCard legalTerms={overview.legalTerms} />
+              <RecommendedResources resources={overview.recommendedResources} />
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-4">
+            <h2 className="text-xs font-semibold tracking-[0.15em] text-cc-muted uppercase">Recent Activity</h2>
             <RecentActivity activity={overview.recentActivity} />
-          </div>
-        </div>
+          </section>
+        </>
       )}
 
       <DashboardDisclaimer disclaimer={overview.disclaimer} />

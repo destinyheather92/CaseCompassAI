@@ -114,6 +114,30 @@ describe("POST /api/auth/first-login-password", () => {
     );
   });
 
+  it("redirects an institution admin to the institution dashboard, never legal intake", async () => {
+    const user = await makeUser({ role: "INSTITUTION_ADMIN" });
+    mockClerkUserId = user.clerkUserId;
+    vi.mocked(completeFirstLogin).mockResolvedValueOnce({ status: "changed" });
+
+    const response = await POST(
+      postRequest({ currentPassword: "temp", newPassword: "correct horse battery", confirmNewPassword: "correct horse battery" }),
+    );
+    const body = await response.json();
+    expect(body.redirectTo).toBe("/institution/dashboard");
+  });
+
+  it("redirects an incarcerated user with no intake yet to /get-started", async () => {
+    const user = await makeUser({ role: "INCARCERATED_USER" });
+    mockClerkUserId = user.clerkUserId;
+    vi.mocked(completeFirstLogin).mockResolvedValueOnce({ status: "changed" });
+
+    const response = await POST(
+      postRequest({ currentPassword: "temp", newPassword: "correct horse battery", confirmNewPassword: "correct horse battery" }),
+    );
+    const body = await response.json();
+    expect(body.redirectTo).toBe("/get-started");
+  });
+
   it("maps incorrect-current-password to 400", async () => {
     const user = await makeUser();
     mockClerkUserId = user.clerkUserId;
