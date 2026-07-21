@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { CaseResultCard } from "@/components/roadmap/case-result-card";
-import { classifyAuthority } from "@/lib/case-search/authority-classifier";
-import { CASE_SEARCH_SAFE_ERROR_MESSAGE, NO_CASES_FOUND_MESSAGE } from "@/lib/case-search/case-search-constants";
-import type { VerifiedCaseResult, CaseVerificationStatus } from "@/lib/case-search/types";
+import { CASE_SEARCH_SAFE_ERROR_MESSAGE } from "@/lib/case-search/case-search-constants";
+import type { CaseVerificationStatus } from "@/lib/case-search/types";
+import type { RankedCaseResult, StageAttemptLog } from "@/lib/case-search/pipeline/types";
 
 type LoadState = "loading" | "ready" | "unavailable" | "error";
 const COURT_LEVELS = [
@@ -31,23 +31,77 @@ const AUTHORITY_FILTERS = [
   { value: "persuasive", label: "Persuasive" },
 ] as const;
 
+function SearchProcessPanel({ attempts }: { attempts: StageAttemptLog[] }) {
+  const [open, setOpen] = useState(false);
+  if (attempts.length === 0) return null;
+  return (
+    <div className="mt-4 border-b border-white/[0.06] pb-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-xs font-medium text-cc-muted underline underline-offset-2"
+      >
+        {open ? "Hide" : "Show"} how we searched
+      </button>
+      {open && (
+        <ul className="mt-2 flex flex-col gap-1 text-xs text-cc-muted">
+          {attempts.map((attempt, index) => (
+            <li key={`${attempt.stageName}-${index}`}>
+              {attempt.label} — {attempt.errored ? "unavailable" : `${attempt.resultCount} result${attempt.resultCount === 1 ? "" : "s"}`}
+              {" "}
+              ({attempt.elapsedMs}ms){attempt.succeeded ? " ✓" : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ExhaustedEmptyState({ suggestedResearchTerms }: { suggestedResearchTerms: string[] }) {
+  return (
+    <div className="text-sm text-cc-muted">
+      <p>
+        We couldn&apos;t locate cases directly matching these facts, even after broadening the search across related legal issues,
+        federal courts, and other jurisdictions.
+      </p>
+      {suggestedResearchTerms.length > 0 && (
+        <>
+          <p className="mt-2 font-medium text-cc-text">Try researching these related terms directly:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {suggestedResearchTerms.map((term) => (
+              <li key={term}>{term}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p className="mt-2">
+        Your roadmap and educational resources remain available in the meantime, and new opinions are added to the source
+        database regularly.
+      </p>
+    </div>
+  );
+}
+
 /**
  * Retrieval-only — every case shown here came back from a real
- * provider search (GET /api/roadmaps/[roadmapId]/cases). "Find
- * Additional Cases" narrows with structured filters only, never an
- * open-ended AI chat. See docs/behavior/verified-case-search.md.
+ * provider search, run through the progressive multi-stage pipeline
+ * (lib/case-search/pipeline/) that broadens the query and jurisdiction
+ * until it finds something rather than stopping at the first empty
+ * result. "Find Additional Cases" narrows with structured filters only,
+ * never an open-ended AI chat. See docs/behavior/verified-case-search.md.
  *
- * `jurisdiction` (the roadmap's own, never a user override — see
- * lib/case-search/build-roadmap-case-request.ts) is used only to
- * compute each result's authority badge and to support the authority
- * filter below; it is never sent to the search endpoint as a
- * user-changeable value, since jurisdiction always comes from the
- * roadmap itself (security invariant).
+ * `jurisdiction` (the roadmap's own, never a user override) is used only
+ * for the authority filter's label; the pipeline itself already
+ * determines binding vs. persuasive per case via `isPersuasiveAuthority`.
  */
-export function CasesToResearch({ roadmapId, jurisdiction }: { roadmapId: string; jurisdiction?: string }) {
+export function CasesToResearch({ roadmapId }: { roadmapId: string; jurisdiction?: string }) {
   const [state, setState] = useState<LoadState>("loading");
   const [message, setMessage] = useState<string | null>(null);
-  const [cases, setCases] = useState<VerifiedCaseResult[]>([]);
+  const [cases, setCases] = useState<RankedCaseResult[]>([]);
+  const [attempts, setAttempts] = useState<StageAttemptLog[]>([]);
+  const [isExhaustedFallback, setIsExhaustedFallback] = useState(false);
+  const [suggestedResearchTerms, setSuggestedResearchTerms] = useState<string[]>([]);
   const [showFilters, setShowFilters] = useState(false);
   const [courtLevel, setCourtLevel] = useState("");
   const [publishedOnly, setPublishedOnly] = useState(false);
@@ -57,22 +111,37 @@ export function CasesToResearch({ roadmapId, jurisdiction }: { roadmapId: string
   const [authorityFilter, setAuthorityFilter] = useState<"" | "binding" | "persuasive">("");
   const [topicFilter, setTopicFilter] = useState("");
 
+  function applyResult(body: {
+    status: string;
+    cases?: RankedCaseResult[];
+    attempts?: StageAttemptLog[];
+    isExhaustedFallback?: boolean;
+    suggestedResearchTerms?: string[];
+    message?: string;
+  }) {
+    if (body.status === "ok") {
+      setCases(body.cases ?? []);
+      setAttempts(body.attempts ?? []);
+      setIsExhaustedFallback(body.isExhaustedFallback ?? false);
+      setSuggestedResearchTerms(body.suggestedResearchTerms ?? []);
+      setState("ready");
+      setMessage(null);
+    } else if (body.status === "unavailable") {
+      setMessage(body.message ?? CASE_SEARCH_SAFE_ERROR_MESSAGE);
+      setState("unavailable");
+    } else {
+      setMessage(body.message ?? CASE_SEARCH_SAFE_ERROR_MESSAGE);
+      setState("error");
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/roadmaps/${roadmapId}/cases`)
       .then((response) => response.json())
       .then((body) => {
         if (cancelled) return;
-        if (body.status === "ok") {
-          setCases(body.page.cases);
-          setState("ready");
-        } else if (body.status === "unavailable") {
-          setMessage(body.message);
-          setState("unavailable");
-        } else {
-          setMessage(body.message ?? CASE_SEARCH_SAFE_ERROR_MESSAGE);
-          setState("error");
-        }
+        applyResult(body);
       })
       .catch(() => {
         if (!cancelled) {
@@ -98,14 +167,7 @@ export function CasesToResearch({ roadmapId, jurisdiction }: { roadmapId: string
         }),
       });
       const body = await response.json();
-      if (body.status === "ok") {
-        setCases(body.page.cases);
-        setState("ready");
-        setMessage(null);
-      } else {
-        setMessage(body.message ?? CASE_SEARCH_SAFE_ERROR_MESSAGE);
-        setState(body.status === "unavailable" ? "unavailable" : "error");
-      }
+      applyResult(body);
     } catch {
       setMessage(CASE_SEARCH_SAFE_ERROR_MESSAGE);
       setState("error");
@@ -114,21 +176,19 @@ export function CasesToResearch({ roadmapId, jurisdiction }: { roadmapId: string
     }
   }
 
-  const allTopics = useMemo(() => Array.from(new Set(cases.flatMap((c) => c.matchedTopics))), [cases]);
+  const allTopics = useMemo(() => Array.from(new Set(cases.flatMap((c) => c.case.matchedTopics))), [cases]);
 
   const visibleCases = useMemo(() => {
-    return cases.filter((caseResult) => {
-      if (verificationFilter && caseResult.verificationStatus !== verificationFilter) return false;
+    return cases.filter((ranked) => {
+      if (verificationFilter && ranked.case.verificationStatus !== verificationFilter) return false;
       if (authorityFilter) {
-        const authority = jurisdiction
-          ? classifyAuthority({ roadmapJurisdiction: jurisdiction, caseJurisdiction: caseResult.jurisdiction, caseCourtId: caseResult.courtId })
-          : null;
+        const authority = ranked.isPersuasiveAuthority ? "persuasive" : "binding";
         if (authority !== authorityFilter) return false;
       }
-      if (topicFilter && !caseResult.matchedTopics.includes(topicFilter)) return false;
+      if (topicFilter && !ranked.case.matchedTopics.includes(topicFilter)) return false;
       return true;
     });
-  }, [cases, verificationFilter, authorityFilter, topicFilter, jurisdiction]);
+  }, [cases, verificationFilter, authorityFilter, topicFilter]);
 
   return (
     <div className="glass-card rounded-2xl p-6">
@@ -247,7 +307,7 @@ export function CasesToResearch({ roadmapId, jurisdiction }: { roadmapId: string
         </div>
       )}
 
-      {state === "loading" && <p className="mt-4 text-sm text-cc-muted">Loading verified cases…</p>}
+      {state === "loading" && <p className="mt-4 text-sm text-cc-muted">Searching across your jurisdiction and related sources…</p>}
 
       {(state === "unavailable" || state === "error") && (
         <p role={state === "error" ? "alert" : "status"} className="mt-4 text-sm text-cc-muted">
@@ -255,17 +315,24 @@ export function CasesToResearch({ roadmapId, jurisdiction }: { roadmapId: string
         </p>
       )}
 
+      {state === "ready" && <SearchProcessPanel attempts={attempts} />}
+
       {state === "ready" && (
         <div className="mt-4 flex flex-col gap-4">
           {visibleCases.length === 0 ? (
-            <p className="text-sm text-cc-muted">{NO_CASES_FOUND_MESSAGE}</p>
+            isExhaustedFallback ? (
+              <ExhaustedEmptyState suggestedResearchTerms={suggestedResearchTerms} />
+            ) : (
+              <p className="text-sm text-cc-muted">No cases match the selected filters. Try broadening them.</p>
+            )
           ) : (
-            visibleCases.map((caseResult) => (
+            visibleCases.map((ranked) => (
               <CaseResultCard
-                key={`${caseResult.providerName}-${caseResult.providerCaseId}`}
-                caseResult={caseResult}
+                key={`${ranked.case.providerName}-${ranked.case.providerCaseId}`}
+                caseResult={ranked.case}
                 roadmapId={roadmapId}
-                roadmapJurisdiction={jurisdiction}
+                confidence={ranked.confidence}
+                isPersuasiveAuthority={ranked.isPersuasiveAuthority}
               />
             ))
           )}

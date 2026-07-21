@@ -2,6 +2,45 @@
 
 Append-only. Add a new dated entry per completed behavior — don't edit past entries except to fix a factual error.
 
+## 2026-07-21 — Progressive multi-stage case search pipeline (never a dead end)
+
+### Expected Behavior
+
+Users were consistently hitting "No verified cases were found for this research topic" after a single query against the roadmap's own jurisdiction and topic set. An experienced legal researcher doesn't stop after one empty search — they simplify the query, try the primary legal issue alone, expand synonyms, try a plain-language/semantic search, broaden to federal courts, then to every jurisdiction, and finally fall back to landmark precedent — so "Cases to Research" now does the same, automatically, before ever showing an empty state.
+
+### Root cause
+
+Confirmed by inspection, not assumed: `searchCasesForRoadmap` called the CourtListener provider exactly once, with a single `court` filter (the roadmap's exact jurisdiction code) and a single `q` value (every roadmap topic and legal term joined with spaces). Any jurisdiction with few reported opinions on a narrow topic set, or a case-type template whose legal terms don't line up with real case-law vocabulary, returned zero results with no fallback — a real gap, not a bug in the existing (correctly-behaving) single-shot code.
+
+### Implementation
+
+New `lib/case-search/pipeline/` module:
+- `legal-issue-lexicon.ts` — deterministic stopword-based query simplification, a canonical primary-legal-issue phrase list (ineffective assistance of counsel, Miranda, Brady, Fourth/Fifth/Sixth Amendment, due process, double jeopardy, habitual offender, sentence enhancement, speedy trial, guilty plea, habeas corpus, discovery), and a synonym-expansion table (DUI/DWI, attorney/counsel/lawyer, plea/plea agreement/plea bargain, sentencing/punishment).
+- `federal-circuits.ts` — the standard U.S. circuit-court map (all 50 states + DC), giving each state its real CourtListener circuit-court id; confirmed live that `ca1`–`ca11`, `cadc`, and `cafc` all exist as documented.
+- `query-strategies.ts` — builds the ordered, deduplicated list of query rewrites (full → simplified → primary legal issue → synonym-expanded → semantic/natural-language using the roadmap's own generated `summary`).
+- `jurisdiction-ladder.ts` — the three jurisdiction tiers (selected → federal → all), each with a real CourtListener `court` filter value (confirmed live that space-separated court ids work as an OR filter, e.g. `court=scotus ca4`) — or `null` for "every jurisdiction."
+- `build-search-attempts.ts` — flattens both into a single bounded (`MAX_SEARCH_ATTEMPTS = 10`) ordered attempt list matching the product spec's own example UI labels ("Searching South Carolina…", "Searching federal courts…", "Searching all jurisdictions…", "Searching landmark cases…").
+- `run-progressive-search.ts` — executes attempts sequentially against an injectable `CaseSourceProvider` (real provider in production, a fake in every test), stopping at the first one with results; a single attempt's provider-level failure never aborts the search (it just moves on), but a *total* outage (every attempt fails) is tracked separately (`isProviderFailure`) from a genuine "searched everywhere, found nothing" (`isExhaustedFallback`) — these are never conflated, since telling a user "nothing exists" during a real CourtListener outage would be dishonest.
+- `confidence.ts` — deterministic 1–5 star confidence per result, based only on which stage found it and (when known) binding-vs-persuasive jurisdiction status — never a claim about matching the user's actual facts.
+
+Extended `CaseSearchRequest` (`lib/case-search/types.ts`) with `rawQuery`/`courtOverride`/`semantic` fields so the pipeline can send a specific query-rewrite/jurisdiction-tier attempt through the existing, already-tested `courtListenerCaseProvider.searchCases` without duplicating its fetch/error-handling logic; confirmed live that CourtListener's `semantic=true` plain-language search mode is real and returns different, relevant results (not merely ignored).
+
+`case-search-service.ts`'s `searchCasesForRoadmap` now takes an optional `summary` parameter — always the roadmap's own generated summary text, passed by the caller (never through the client-validated request schema) — and delegates to `runProgressiveSearch`, mapping `isProviderFailure` to the existing `unavailable` status and everything else to a richer `ok` response (`cases`, `succeededStage`, `attempts`, `isExhaustedFallback`, `suggestedResearchTerms`). The cache (`lib/case-search/cache.ts`) now stores the full `ProgressiveSearchResult` instead of just a result page.
+
+UI (`components/roadmap/cases-to-research.tsx`, `case-result-card.tsx`): confidence stars + explanation on every card; a "Persuasive Authority" badge computed from the pipeline's own `isPersuasiveAuthority` flag (superseding ad hoc client-side authority classification for pipeline results); a collapsible "Show how we searched" transparency panel listing every real attempt (stage, result count, elapsed time) — deliberately a post-hoc real log rather than a simulated live progress indicator, since faking stage-by-stage progress before it actually happened would be its own small dishonesty; and a genuinely richer empty state (`ExhaustedEmptyState`) that lists the roadmap's own related legal terms and the strategies actually tried, shown only when the pipeline truly exhausted every stage — never when a provider outage is the real cause, and never inventing a case suggestion.
+
+### Adaptations made deliberately (documented, not silently substituted)
+
+See `docs/behavior/verified-case-search.md`'s "Progressive search pipeline" section for the full list: deterministic (not live-LLM) query-strategy generation, since roadmap generation has no AI provider wired in; the semantic-search stage uses the roadmap's own non-private summary, never the user's private intake narrative; confidence-star wording avoids claiming "exact factual match" since this pipeline never verifies factual similarity; and the "current search stage" UI is a real post-hoc attempt log rather than simulated live progress.
+
+### Verification
+
+- New unit tests: `tests/unit/case-search/pipeline/{legal-issue-lexicon,query-strategies,jurisdiction-ladder,federal-circuits,build-search-attempts,confidence,run-progressive-search}.test.ts` (50 tests, all provider calls mocked/injected).
+- Updated `tests/unit/case-search/case-search-service.test.ts`, `tests/integration/case-search/roadmap-cases-route.test.ts`, `tests/components/roadmap/{case-result-card,cases-to-research}.test.tsx` for the new response shape.
+- `npx vitest run` (full suite): all tests pass.
+- `npx tsc --noEmit`: clean.
+- `npx eslint .`: clean.
+
 ## 2026-07-21 — Verified case retrieval and source attribution (citation verification, citation graph, normalized storage, authority classification)
 
 ### Expected Behavior

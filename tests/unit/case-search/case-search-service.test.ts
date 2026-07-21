@@ -81,17 +81,44 @@ describe("searchCasesForRoadmap", () => {
     expect(courtListenerCaseProvider.searchCases).not.toHaveBeenCalled();
   });
 
-  it("returns the provider's page on success", async () => {
+  it("returns the provider's cases on success, ranked, after only the first (primary-query) attempt", async () => {
     vi.mocked(courtListenerCaseProvider.searchCases).mockResolvedValueOnce({ status: "ok", page: samplePage });
     const result = await searchCasesForRoadmap(validRequest);
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
-      expect(result.page.cases).toHaveLength(1);
+      expect(result.cases).toHaveLength(1);
+      expect(result.cases[0].confidence.stars).toBe(5);
+      expect(result.succeededStage).toBe("primary-query");
+    }
+    expect(courtListenerCaseProvider.searchCases).toHaveBeenCalledTimes(1);
+  });
+
+  it("broadens the search and keeps going when earlier attempts return zero results", async () => {
+    vi.mocked(courtListenerCaseProvider.searchCases)
+      .mockResolvedValueOnce({ status: "ok", page: { cases: [], nextCursor: null } })
+      .mockResolvedValueOnce({ status: "ok", page: { cases: [], nextCursor: null } })
+      .mockResolvedValueOnce({ status: "ok", page: samplePage });
+    const result = await searchCasesForRoadmap(validRequest);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.cases).toHaveLength(1);
+    }
+    expect(vi.mocked(courtListenerCaseProvider.searchCases).mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("continues to the next stage when one attempt errors, rather than giving up immediately", async () => {
+    vi.mocked(courtListenerCaseProvider.searchCases)
+      .mockResolvedValueOnce({ status: "provider-error", message: "raw upstream failure detail" })
+      .mockResolvedValueOnce({ status: "ok", page: samplePage });
+    const result = await searchCasesForRoadmap(validRequest);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.cases).toHaveLength(1);
     }
   });
 
-  it("maps a provider-error result to a safe unavailable message, never the raw provider error", async () => {
-    vi.mocked(courtListenerCaseProvider.searchCases).mockResolvedValueOnce({ status: "provider-error", message: "raw upstream failure detail" });
+  it("maps a total provider outage (every attempt fails) to a safe unavailable message, never the raw provider error", async () => {
+    vi.mocked(courtListenerCaseProvider.searchCases).mockResolvedValue({ status: "provider-error", message: "raw upstream failure detail" });
     const result = await searchCasesForRoadmap(validRequest);
     expect(result.status).toBe("unavailable");
     if (result.status === "unavailable") {
@@ -99,10 +126,21 @@ describe("searchCasesForRoadmap", () => {
     }
   });
 
-  it("maps a timeout result to a safe unavailable message", async () => {
-    vi.mocked(courtListenerCaseProvider.searchCases).mockResolvedValueOnce({ status: "timeout", message: "x" });
+  it("maps a total timeout outage to a safe unavailable message", async () => {
+    vi.mocked(courtListenerCaseProvider.searchCases).mockResolvedValue({ status: "timeout", message: "x" });
     const result = await searchCasesForRoadmap(validRequest);
     expect(result.status).toBe("unavailable");
+  });
+
+  it("returns an exhausted-fallback empty state (not 'unavailable') when every stage genuinely returns zero results", async () => {
+    vi.mocked(courtListenerCaseProvider.searchCases).mockResolvedValue({ status: "ok", page: { cases: [], nextCursor: null } });
+    const result = await searchCasesForRoadmap(validRequest);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.cases).toHaveLength(0);
+      expect(result.isExhaustedFallback).toBe(true);
+      expect(result.suggestedResearchTerms.length).toBeGreaterThan(0);
+    }
   });
 
   it("caches a successful result and does not call the provider again for the same request", async () => {

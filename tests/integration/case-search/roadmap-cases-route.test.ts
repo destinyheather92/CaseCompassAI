@@ -69,7 +69,15 @@ async function makeRoadmap(userId: string) {
   return roadmap;
 }
 
-const okResult = { status: "ok" as const, page: { cases: [], nextCursor: null } };
+const okResult = {
+  status: "ok" as const,
+  cases: [],
+  succeededStage: null,
+  attempts: [],
+  isExhaustedFallback: true,
+  isProviderFailure: false,
+  suggestedResearchTerms: [],
+};
 
 describe("GET /api/roadmaps/[roadmapId]/cases", () => {
   beforeEach(() => {
@@ -111,6 +119,7 @@ describe("GET /api/roadmaps/[roadmapId]/cases", () => {
     expect(response.status).toBe(200);
     expect(searchCasesForRoadmap).toHaveBeenCalledWith(
       expect.objectContaining({ jurisdiction: "SC", topics: expect.arrayContaining(["Understand Habeas Corpus"]) }),
+      "x",
     );
   });
 
@@ -164,6 +173,7 @@ describe("POST /api/roadmaps/[roadmapId]/cases/search", () => {
 
     expect(searchCasesForRoadmap).toHaveBeenCalledWith(
       expect.objectContaining({ jurisdiction: "SC", topics: ["custom topic"], publishedOnly: true }),
+      "x",
     );
   });
 

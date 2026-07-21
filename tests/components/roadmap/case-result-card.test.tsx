@@ -100,6 +100,28 @@ describe("CaseResultCard", () => {
     });
   });
 
+  it("shows confidence stars and explanation when a confidence rating is provided", () => {
+    render(
+      <CaseResultCard
+        caseResult={sampleCase}
+        roadmapId="r1"
+        confidence={{ stars: 4, label: "Same legal issue", explanation: "Same legal issue identified in your roadmap." }}
+      />,
+    );
+    expect(screen.getByText("Same legal issue")).toBeInTheDocument();
+    expect(screen.getByText("Same legal issue identified in your roadmap.")).toBeInTheDocument();
+  });
+
+  it("shows a Persuasive Authority badge when the pipeline flags the case as out-of-jurisdiction", () => {
+    render(<CaseResultCard caseResult={sampleCase} roadmapId="r1" isPersuasiveAuthority={true} />);
+    expect(screen.getByText("Persuasive Authority")).toBeInTheDocument();
+  });
+
+  it("shows no Persuasive Authority badge when the pipeline flags the case as in-jurisdiction", () => {
+    render(<CaseResultCard caseResult={sampleCase} roadmapId="r1" isPersuasiveAuthority={false} />);
+    expect(screen.queryByText("Persuasive Authority")).not.toBeInTheDocument();
+  });
+
   it("shows an error and keeps the button enabled when saving fails", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ status: "invalid-request", message: "x" }, 400));
     const user = userEvent.setup();

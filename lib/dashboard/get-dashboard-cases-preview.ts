@@ -20,8 +20,8 @@ export async function getDashboardCasesPreview(roadmapId: string): Promise<Verif
 
   const content = roadmap.content as unknown as ResearchRoadmapContent;
   const request = buildRoadmapCaseRequest(content, { limit: PREVIEW_LIMIT });
-  const result = await searchCasesForRoadmap(request);
+  const result = await searchCasesForRoadmap(request, content.summary);
   if (result.status !== "ok") return [];
 
-  return result.page.cases.slice(0, PREVIEW_LIMIT);
+  return result.cases.slice(0, PREVIEW_LIMIT).map((ranked) => ranked.case);
 }

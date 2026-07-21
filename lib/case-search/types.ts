@@ -32,6 +32,18 @@ export interface CaseSearchRequest {
   publishedOnly?: boolean;
   limit?: number;
   cursor?: string | null;
+  /**
+   * Used only by the progressive search pipeline (lib/case-search/pipeline/)
+   * to send a specific query-rewrite/jurisdiction-tier attempt instead of
+   * the default topics+legalTerms join and `jurisdiction` court filter.
+   * `rawQuery` still must be roadmap-derived, non-private text — the
+   * pipeline never places the user's private intake narrative here.
+   */
+  rawQuery?: string;
+  /** Overrides the `court` param entirely — `null` means search every jurisdiction, `undefined` means use `jurisdiction` as before. */
+  courtOverride?: string | null;
+  /** Sets CourtListener's semantic=true plain-language search mode instead of keyword search — confirmed live against the v4 API. */
+  semantic?: boolean;
 }
 
 /**

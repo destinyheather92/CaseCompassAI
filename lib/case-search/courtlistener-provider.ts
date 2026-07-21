@@ -168,8 +168,10 @@ function mapResult(
 function buildSearchParams(request: CaseSearchRequest): URLSearchParams {
   const params = new URLSearchParams();
   params.set("type", "o");
-  params.set("q", [...request.topics, ...(request.legalTerms ?? [])].join(" "));
-  if (request.jurisdiction) params.set("court", request.jurisdiction.toLowerCase());
+  params.set("q", request.rawQuery ?? [...request.topics, ...(request.legalTerms ?? [])].join(" "));
+  const court = request.courtOverride !== undefined ? request.courtOverride : request.jurisdiction ? request.jurisdiction.toLowerCase() : undefined;
+  if (court) params.set("court", court);
+  if (request.semantic) params.set("semantic", "true");
   if (request.dateRange?.from) params.set("filed_after", request.dateRange.from);
   if (request.dateRange?.to) params.set("filed_before", request.dateRange.to);
   if (request.publishedOnly) params.set("stat_Published", "on");

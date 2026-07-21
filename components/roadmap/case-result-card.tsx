@@ -8,6 +8,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { LATER_HISTORY_NOT_CHECKED_NOTICE } from "@/lib/case-search/case-search-constants";
 import { classifyAuthority } from "@/lib/case-search/authority-classifier";
 import type { VerifiedCaseResult } from "@/lib/case-search/types";
+import type { ConfidenceRating } from "@/lib/case-search/pipeline/types";
 
 type SaveState = "idle" | "saving" | "saved" | "already-saved" | "error";
 
@@ -40,14 +41,29 @@ const AUTHORITY_LABELS = { binding: "Binding", persuasive: "Persuasive" } as con
  * No badge is shown at all when the relationship can't be determined,
  * rather than guessing.
  */
+/** Renders ★ for filled stars and ☆ for empty ones — text glyphs, not an icon dependency, so it renders identically in tests and the browser. */
+function ConfidenceStars({ stars }: { stars: 1 | 2 | 3 | 4 | 5 }) {
+  return (
+    <span aria-hidden="true" className="text-cc-purple">
+      {"★".repeat(stars)}
+      {"☆".repeat(5 - stars)}
+    </span>
+  );
+}
+
 export function CaseResultCard({
   caseResult,
   roadmapId,
   roadmapJurisdiction,
+  confidence,
+  isPersuasiveAuthority,
 }: {
   caseResult: VerifiedCaseResult;
   roadmapId?: string;
   roadmapJurisdiction?: string;
+  /** Set by the progressive search pipeline (lib/case-search/pipeline/) — omitted for cases rendered outside that pipeline. */
+  confidence?: ConfidenceRating;
+  isPersuasiveAuthority?: boolean;
 }) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const authority = roadmapJurisdiction
@@ -107,12 +123,24 @@ export function CaseResultCard({
           <Badge variant={VERIFICATION_BADGE_VARIANTS[caseResult.verificationStatus]}>
             {VERIFICATION_BADGE_LABELS[caseResult.verificationStatus]}
           </Badge>
-          {authority && <Badge variant="outline">{AUTHORITY_LABELS[authority]}</Badge>}
+          {isPersuasiveAuthority !== undefined ? (
+            isPersuasiveAuthority && <Badge variant="outline">Persuasive Authority</Badge>
+          ) : (
+            authority && <Badge variant="outline">{AUTHORITY_LABELS[authority]}</Badge>
+          )}
           <Badge variant={caseResult.publicationStatus === "published" ? "default" : "outline"}>
             {caseResult.publicationStatus}
           </Badge>
         </div>
       </div>
+
+      {confidence && (
+        <div className="mt-2 flex items-center gap-2">
+          <ConfidenceStars stars={confidence.stars} />
+          <span className="text-xs font-semibold text-cc-text">{confidence.label}</span>
+        </div>
+      )}
+      {confidence && <p className="mt-1 text-xs text-cc-muted">{confidence.explanation}</p>}
 
       <p className="mt-3 text-xs text-cc-teal">{caseResult.relevanceSummary}</p>
 

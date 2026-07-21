@@ -87,6 +87,6 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ro
 
   const content = owned.resource.content as unknown as ResearchRoadmapContent;
   const caseRequest = buildRoadmapCaseRequest(content, extractOverrides(body));
-  const result = await searchCasesForRoadmap(caseRequest);
+  const result = await searchCasesForRoadmap(caseRequest, content.summary);
   return NextResponse.json(result, { status: statusCodeFor(result.status) });
 }
