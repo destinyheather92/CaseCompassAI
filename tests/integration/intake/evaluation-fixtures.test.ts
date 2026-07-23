@@ -4,32 +4,56 @@ import { startIntakeSession } from "@/lib/intake/start-intake-session";
 import { submitIntakeAnswer } from "@/lib/intake/submit-intake-answer";
 import { createScriptedInterviewerProvider } from "../../helpers/fake-intake-interviewer-provider";
 import { INTAKE_SCENARIOS } from "../../fixtures/intake-scenarios";
+import type { AppUser } from "@/lib/auth/authorization";
 
 const createdSessionIds: string[] = [];
+const createdUserIds: string[] = [];
+const createdMatterIds: string[] = [];
+
+async function makeUser(): Promise<AppUser> {
+  const user = await prisma.user.create({
+    data: { clerkUserId: `clerk-eval-fixture-${Date.now()}-${Math.random()}`, role: "INDIVIDUAL" },
+  });
+  createdUserIds.push(user.id);
+  return {
+    id: user.id,
+    clerkUserId: user.clerkUserId,
+    role: "INDIVIDUAL",
+    accountStatus: "ACTIVE",
+    institutionId: null,
+    facilityId: null,
+    mustChangePassword: false,
+  };
+}
 
 describe("intake evaluation fixtures (fictional, non-identifying scenarios)", () => {
   afterEach(async () => {
     await prisma.intakeAnswer.deleteMany({ where: { intakeSessionId: { in: createdSessionIds } } });
     await prisma.intakeSession.deleteMany({ where: { id: { in: createdSessionIds } } });
     createdSessionIds.length = 0;
+    await prisma.matter.deleteMany({ where: { id: { in: createdMatterIds } } });
+    createdMatterIds.length = 0;
   });
 
   afterAll(async () => {
+    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await prisma.$disconnect();
   });
 
   it.each(INTAKE_SCENARIOS)("runs the full scenario without error: $name", async (scenario) => {
+    const user = await makeUser();
     const provider = createScriptedInterviewerProvider(scenario.script);
 
     const started = await startIntakeSession(
       scenario.deterministicInput,
-      { userId: null, institutionId: null, facilityId: null },
+      { userId: user.id, institutionId: null, facilityId: null },
       { interviewerProvider: provider },
     );
 
     expect(started.status).toBe("started");
     if (started.status !== "started") return;
     createdSessionIds.push(started.sessionId);
+    createdMatterIds.push(started.matterId);
 
     let currentQuestion = started.question;
     for (const answerText of scenario.answers) {
@@ -38,7 +62,7 @@ describe("intake evaluation fixtures (fictional, non-identifying scenarios)", ()
 
       const result = await submitIntakeAnswer(
         { sessionId: started.sessionId, questionId: currentQuestion.id, answerText },
-        null,
+        user,
         { interviewerProvider: provider },
       );
       expect(result.status).toBe("answered");
@@ -52,21 +76,23 @@ describe("intake evaluation fixtures (fictional, non-identifying scenarios)", ()
   });
 
   it("the prompt-injection scenario stores the user's text verbatim as data — never as an executed instruction", async () => {
+    const user = await makeUser();
     const scenario = INTAKE_SCENARIOS.find((s) => s.name === "prompt-injection-shaped answer");
     if (!scenario) throw new Error("fixture missing");
 
     const provider = createScriptedInterviewerProvider(scenario.script);
     const started = await startIntakeSession(
       scenario.deterministicInput,
-      { userId: null, institutionId: null, facilityId: null },
+      { userId: user.id, institutionId: null, facilityId: null },
       { interviewerProvider: provider },
     );
     if (started.status !== "started" || !started.question) throw new Error("setup failed");
     createdSessionIds.push(started.sessionId);
+    createdMatterIds.push(started.matterId);
 
     await submitIntakeAnswer(
       { sessionId: started.sessionId, questionId: started.question.id, answerText: scenario.answers[0] },
-      null,
+      user,
       { interviewerProvider: provider },
     );
 
@@ -81,21 +107,23 @@ describe("intake evaluation fixtures (fictional, non-identifying scenarios)", ()
   });
 
   it("the 'asks for legal advice' scenario does not answer the legal question — it continues fact-gathering and flags it", async () => {
+    const user = await makeUser();
     const scenario = INTAKE_SCENARIOS.find((s) => s.name === "user asks for legal advice instead of giving facts");
     if (!scenario) throw new Error("fixture missing");
 
     const provider = createScriptedInterviewerProvider(scenario.script);
     const started = await startIntakeSession(
       scenario.deterministicInput,
-      { userId: null, institutionId: null, facilityId: null },
+      { userId: user.id, institutionId: null, facilityId: null },
       { interviewerProvider: provider },
     );
     if (started.status !== "started" || !started.question) throw new Error("setup failed");
     createdSessionIds.push(started.sessionId);
+    createdMatterIds.push(started.matterId);
 
     const result = await submitIntakeAnswer(
       { sessionId: started.sessionId, questionId: started.question.id, answerText: scenario.answers[0] },
-      null,
+      user,
       { interviewerProvider: provider },
     );
 

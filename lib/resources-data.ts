@@ -19,6 +19,10 @@ export type ResourceMeta = {
   /** SEO meta description — can be the same as cardDescription or slightly longer. */
   metaDescription: string;
   eyebrow: string;
+  /** A reasonable estimate for this page's own content, not a measured/tracked analytic. */
+  readingTimeMinutes: number;
+  /** Every resource in this registry is written for someone with no legal background — there is currently no intermediate/advanced tier. */
+  difficulty: "Beginner";
 };
 
 export const resourcesRegistry: Record<ResourceSlug, ResourceMeta> = {
@@ -31,6 +35,8 @@ export const resourcesRegistry: Record<ResourceSlug, ResourceMeta> = {
     metaDescription:
       "A plain-language guide to reading court opinions — case name, facts, issue, holding, reasoning, and how to tell a holding from dicta.",
     eyebrow: "Legal Research",
+    readingTimeMinutes: 7,
+    difficulty: "Beginner",
   },
   "legal-research-basics": {
     slug: "legal-research-basics",
@@ -41,6 +47,8 @@ export const resourcesRegistry: Record<ResourceSlug, ResourceMeta> = {
     metaDescription:
       "An introduction to legal research fundamentals: jurisdiction, primary vs. secondary authority, binding vs. persuasive authority, and a step-by-step research sequence.",
     eyebrow: "Legal Research",
+    readingTimeMinutes: 6,
+    difficulty: "Beginner",
   },
   "legal-citations": {
     slug: "legal-citations",
@@ -51,6 +59,8 @@ export const resourcesRegistry: Record<ResourceSlug, ResourceMeta> = {
     metaDescription:
       "Learn how to read legal citations for cases, statutes, and regulations, with real examples broken down piece by piece.",
     eyebrow: "Legal Research",
+    readingTimeMinutes: 5,
+    difficulty: "Beginner",
   },
   "legal-terms-glossary": {
     slug: "legal-terms-glossary",
@@ -61,6 +71,8 @@ export const resourcesRegistry: Record<ResourceSlug, ResourceMeta> = {
     metaDescription:
       "A searchable glossary of common legal terms with plain-language definitions, examples, related concepts, and trusted sources.",
     eyebrow: "Legal Research",
+    readingTimeMinutes: 4,
+    difficulty: "Beginner",
   },
   "research-safety": {
     slug: "research-safety",
@@ -71,6 +83,8 @@ export const resourcesRegistry: Record<ResourceSlug, ResourceMeta> = {
     metaDescription:
       "Why you should verify citations, check publication and later history, and avoid relying on a single summary when doing legal research.",
     eyebrow: "Research Safety",
+    readingTimeMinutes: 4,
+    difficulty: "Beginner",
   },
   "what-casecompass-can-and-cannot-do": {
     slug: "what-casecompass-can-and-cannot-do",
@@ -81,6 +95,8 @@ export const resourcesRegistry: Record<ResourceSlug, ResourceMeta> = {
     metaDescription:
       "A balanced look at what CaseCompass AI can and cannot do — it provides educational research guidance, not legal advice.",
     eyebrow: "About CaseCompass",
+    readingTimeMinutes: 3,
+    difficulty: "Beginner",
   },
 };
 

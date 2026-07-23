@@ -48,24 +48,10 @@ describe("POST /api/intake/interview/start", () => {
     createdUserIds.length = 0;
   });
 
-  it("allows a guest (unauthenticated) request", async () => {
-    vi.mocked(startIntakeSession).mockResolvedValueOnce({
-      status: "started",
-      sessionId: "s1",
-      intakeStatus: "interviewing",
-      question: null,
-      factualSummary: "",
-      unresolvedInformation: [],
-      topicsCovered: [],
-      questionCount: 0,
-    });
-
+  it("rejects a guest (unauthenticated) request — intake now always requires a real account", async () => {
     const response = await POST(postRequest(validInput));
-    expect(response.status).toBe(201);
-    expect(startIntakeSession).toHaveBeenCalledWith(
-      validInput,
-      expect.objectContaining({ userId: null, institutionId: null, facilityId: null }),
-    );
+    expect(response.status).toBe(401);
+    expect(startIntakeSession).not.toHaveBeenCalled();
   });
 
   it("allows an active, password-complete authenticated user and passes their scope", async () => {
@@ -78,6 +64,7 @@ describe("POST /api/intake/interview/start", () => {
     vi.mocked(startIntakeSession).mockResolvedValueOnce({
       status: "started",
       sessionId: "s2",
+      matterId: "m2",
       intakeStatus: "interviewing",
       question: null,
       factualSummary: "",
@@ -114,6 +101,7 @@ describe("POST /api/intake/interview/start", () => {
     vi.mocked(startIntakeSession).mockResolvedValueOnce({
       status: "started",
       sessionId: "s3",
+      matterId: "m3",
       intakeStatus: "interviewing",
       question: null,
       factualSummary: "",
@@ -163,6 +151,12 @@ describe("POST /api/intake/interview/start", () => {
   });
 
   it("rejects a malformed JSON body with 400 and never calls the service", async () => {
+    const user = await prisma.user.create({
+      data: { clerkUserId: `clerk-intake-start-badjson-${Date.now()}`, role: "INDIVIDUAL", accountStatus: "ACTIVE" },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
     const response = await POST(
       new NextRequest("https://example.com/api/intake/interview/start", { method: "POST", body: "{not json" }),
     );
@@ -171,12 +165,24 @@ describe("POST /api/intake/interview/start", () => {
   });
 
   it("rejects an oversized request via Content-Length before parsing the body", async () => {
+    const user = await prisma.user.create({
+      data: { clerkUserId: `clerk-intake-start-oversized-${Date.now()}`, role: "INDIVIDUAL", accountStatus: "ACTIVE" },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
     const response = await POST(postRequest(validInput, { "content-length": "999999" }));
     expect(response.status).toBe(413);
     expect(startIntakeSession).not.toHaveBeenCalled();
   });
 
   it("maps invalid-request to 400 and provider-unavailable to 503", async () => {
+    const user = await prisma.user.create({
+      data: { clerkUserId: `clerk-intake-start-mapstatus-${Date.now()}`, role: "INDIVIDUAL", accountStatus: "ACTIVE" },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
     vi.mocked(startIntakeSession).mockResolvedValueOnce({ status: "invalid-request", message: "bad" });
     let response = await POST(postRequest(validInput));
     expect(response.status).toBe(400);
@@ -186,10 +192,17 @@ describe("POST /api/intake/interview/start", () => {
     expect(response.status).toBe(503);
   });
 
-  it("enforces rate limiting per guest IP", async () => {
+  it("enforces rate limiting per authenticated user", async () => {
+    const user = await prisma.user.create({
+      data: { clerkUserId: `clerk-intake-start-ratelimit-${Date.now()}`, role: "INDIVIDUAL", accountStatus: "ACTIVE" },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
     vi.mocked(startIntakeSession).mockResolvedValue({
       status: "started",
-      sessionId: "s3",
+      sessionId: "s4",
+      matterId: "m4",
       intakeStatus: "interviewing",
       question: null,
       factualSummary: "",
@@ -198,16 +211,9 @@ describe("POST /api/intake/interview/start", () => {
       questionCount: 0,
     });
 
-    const makeRateLimitedRequest = () =>
-      new NextRequest("https://example.com/api/intake/interview/start", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.77" },
-        body: JSON.stringify(validInput),
-      });
-
     let lastResponse;
     for (let i = 0; i < 11; i++) {
-      lastResponse = await POST(makeRateLimitedRequest());
+      lastResponse = await POST(postRequest(validInput));
     }
     expect(lastResponse?.status).toBe(429);
   });

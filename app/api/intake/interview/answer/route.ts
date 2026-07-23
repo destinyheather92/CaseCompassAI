@@ -1,9 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireOptionalUser } from "@/lib/auth/authorization";
+import { requireAuthenticatedUser } from "@/lib/auth/authorization";
 import { authorizationFailureResponse } from "@/lib/auth/authorization-http";
 import { submitIntakeAnswer } from "@/lib/intake/submit-intake-answer";
 import { createRateLimiter } from "@/lib/security/rate-limit";
-import { clientIdFor } from "@/lib/security/request-identity";
 import { isRequestTooLarge } from "@/lib/security/request-limits";
 
 export const runtime = "nodejs";
@@ -31,14 +30,13 @@ function statusCodeFor(status: string): number {
 }
 
 export async function POST(request: NextRequest) {
-  const authResult = await requireOptionalUser();
+  const authResult = await requireAuthenticatedUser();
   if (!authResult.ok) {
     const failure = authorizationFailureResponse(authResult.reason);
     return NextResponse.json(failure.body, { status: failure.status });
   }
 
-  const rateLimitKey = authResult.user?.id ?? clientIdFor(request);
-  if (answerRateLimiter.isLimited(rateLimitKey)) {
+  if (answerRateLimiter.isLimited(authResult.user.id)) {
     return NextResponse.json(
       { status: "rate-limited", message: "Too many requests. Please wait a moment and try again." },
       { status: 429 },

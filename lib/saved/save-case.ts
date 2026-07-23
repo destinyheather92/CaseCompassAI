@@ -22,22 +22,30 @@ export async function saveCase(rawInput: unknown, actorUser: AppUser): Promise<S
     return { status: "invalid-request", message: parsed.error.issues[0]?.message ?? "Invalid request." };
   }
 
+  // matterId is never taken from client input — it's derived from the
+  // roadmap the caller has already proven ownership of.
+  let matterId: string | null = null;
   if (parsed.data.roadmapId) {
     const owned = await requireOwnedRoadmap(parsed.data.roadmapId, actorUser);
     if (!owned.ok) {
       return { status: "invalid-roadmap" };
     }
+    matterId = owned.resource.matterId;
   }
 
-  const existing = await prisma.savedCase.findUnique({
-    where: {
-      userId_providerName_providerCaseId: {
-        userId: actorUser.id,
-        providerName: parsed.data.providerName,
-        providerCaseId: parsed.data.providerCaseId,
-      },
-    },
-  });
+  const existing = matterId
+    ? await prisma.savedCase.findUnique({
+        where: { matterId_providerName_providerCaseId: { matterId, providerName: parsed.data.providerName, providerCaseId: parsed.data.providerCaseId } },
+      })
+    : await prisma.savedCase.findUnique({
+        where: {
+          userId_providerName_providerCaseId: {
+            userId: actorUser.id,
+            providerName: parsed.data.providerName,
+            providerCaseId: parsed.data.providerCaseId,
+          },
+        },
+      });
   if (existing) {
     return { status: "already-saved", id: existing.id };
   }
@@ -45,6 +53,7 @@ export async function saveCase(rawInput: unknown, actorUser: AppUser): Promise<S
   const saved = await prisma.savedCase.create({
     data: {
       userId: actorUser.id,
+      matterId,
       roadmapId: parsed.data.roadmapId,
       providerName: parsed.data.providerName,
       providerCaseId: parsed.data.providerCaseId,

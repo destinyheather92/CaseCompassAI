@@ -61,13 +61,15 @@ export interface PrimaryAction {
 export interface PrimaryActionIds {
   intakeId: string | null;
   roadmapId: string | null;
+  /** When known, threads the matter through to /get-started so a fresh intake attaches to the right matter instead of creating a new one. */
+  matterId?: string | null;
 }
 
 /** Server-derived status in, a single unambiguous next action out. Never branches on anything the client provided. */
 export function primaryActionFor(status: ResearchStatus, ids: PrimaryActionIds): PrimaryAction {
   switch (status) {
     case "not-started":
-      return { label: "Start Intake", href: "/get-started" };
+      return { label: "Start Intake", href: ids.matterId ? `/get-started?matterId=${ids.matterId}` : "/get-started" };
     case "intake-in-progress":
       return { label: "Continue Intake", href: `/dashboard/intakes/${ids.intakeId}` };
     case "ready-for-review":

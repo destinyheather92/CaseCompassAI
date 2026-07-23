@@ -39,6 +39,15 @@ function completeRequest(body: unknown) {
   });
 }
 
+async function signInAsNewUser(prefix: string) {
+  const user = await prisma.user.create({
+    data: { clerkUserId: `clerk-${prefix}-${Date.now()}-${Math.random()}`, role: "INDIVIDUAL", accountStatus: "ACTIVE" },
+  });
+  createdUserIds.push(user.id);
+  mockClerkUserId = user.clerkUserId;
+  return user;
+}
+
 describe("GET /api/intake/interview/[sessionId]", () => {
   beforeEach(() => {
     mockClerkUserId = null;
@@ -50,7 +59,14 @@ describe("GET /api/intake/interview/[sessionId]", () => {
     createdUserIds.length = 0;
   });
 
-  it("allows a guest request and maps found -> 200", async () => {
+  it("rejects a guest (unauthenticated) request — intake now always requires a real account", async () => {
+    const response = await GET(getRequest(), ctx("s1"));
+    expect(response.status).toBe(401);
+    expect(getIntakeSession).not.toHaveBeenCalled();
+  });
+
+  it("allows an authenticated request and maps found -> 200", async () => {
+    const user = await signInAsNewUser("intake-get");
     vi.mocked(getIntakeSession).mockResolvedValueOnce({
       status: "found",
       session: {
@@ -71,10 +87,11 @@ describe("GET /api/intake/interview/[sessionId]", () => {
     });
     const response = await GET(getRequest(), ctx("s1"));
     expect(response.status).toBe(200);
-    expect(getIntakeSession).toHaveBeenCalledWith("s1", null);
+    expect(getIntakeSession).toHaveBeenCalledWith("s1", expect.objectContaining({ id: user.id }));
   });
 
   it("maps not-found -> 404 and forbidden -> 403", async () => {
+    await signInAsNewUser("intake-get-status");
     vi.mocked(getIntakeSession).mockResolvedValueOnce({ status: "not-found" });
     let response = await GET(getRequest(), ctx("missing"));
     expect(response.status).toBe(404);
@@ -86,7 +103,7 @@ describe("GET /api/intake/interview/[sessionId]", () => {
 
   it("rejects a disabled signed-in user before calling the service", async () => {
     const user = await prisma.user.create({
-      data: { clerkUserId: `clerk-intake-get-${Date.now()}`, role: "INDIVIDUAL", accountStatus: "DISABLED" },
+      data: { clerkUserId: `clerk-intake-get-disabled-${Date.now()}`, role: "INDIVIDUAL", accountStatus: "DISABLED" },
     });
     createdUserIds.push(user.id);
     mockClerkUserId = user.clerkUserId;
@@ -103,14 +120,27 @@ describe("POST /api/intake/interview/[sessionId]/complete", () => {
     vi.mocked(completeIntakeSession).mockReset();
   });
 
+  afterEach(async () => {
+    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    createdUserIds.length = 0;
+  });
+
+  it("rejects a guest (unauthenticated) request", async () => {
+    const response = await completePOST(completeRequest({ acknowledged: true }), ctx("s1"));
+    expect(response.status).toBe(401);
+    expect(completeIntakeSession).not.toHaveBeenCalled();
+  });
+
   it("passes acknowledged through and maps completed -> 200", async () => {
+    const user = await signInAsNewUser("intake-complete");
     vi.mocked(completeIntakeSession).mockResolvedValueOnce({ status: "completed", sessionId: "s1" });
     const response = await completePOST(completeRequest({ acknowledged: true }), ctx("s1"));
     expect(response.status).toBe(200);
-    expect(completeIntakeSession).toHaveBeenCalledWith("s1", true, null);
+    expect(completeIntakeSession).toHaveBeenCalledWith("s1", true, expect.objectContaining({ id: user.id }));
   });
 
   it("rejects a request missing the acknowledged field", async () => {
+    await signInAsNewUser("intake-complete-missing-ack");
     const response = await completePOST(completeRequest({}), ctx("s1"));
     expect(response.status).toBe(400);
     expect(completeIntakeSession).not.toHaveBeenCalled();
@@ -122,6 +152,7 @@ describe("POST /api/intake/interview/[sessionId]/complete", () => {
     ["not-ready", 400],
     ["acknowledgement-required", 400],
   ] as const)("maps service status %s to HTTP %d", async (status, expectedCode) => {
+    await signInAsNewUser("intake-complete-map");
     vi.mocked(completeIntakeSession).mockResolvedValueOnce({ status, message: "x" } as never);
     const response = await completePOST(completeRequest({ acknowledged: true }), ctx("s1"));
     expect(response.status).toBe(expectedCode);

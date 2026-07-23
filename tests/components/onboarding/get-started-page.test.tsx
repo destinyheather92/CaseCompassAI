@@ -4,12 +4,6 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useIntakeStore } from "@/stores/use-intake-store";
 
-let mockIsSignedIn = false;
-vi.mock("@clerk/nextjs", () => ({
-  useAuth: () => ({ isLoaded: true, isSignedIn: mockIsSignedIn }),
-  useClerk: () => ({ signOut: vi.fn() }),
-}));
-
 const pushMock = vi.fn();
 let mockSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
@@ -17,19 +11,31 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => mockSearchParams,
 }));
 
+vi.mock("@clerk/nextjs", () => ({
+  useClerk: () => ({ signOut: vi.fn() }),
+}));
+
 vi.mock("@/lib/client/user-scoped-storage", () => ({
   clearAllLocalSessionData: vi.fn(),
 }));
 
-const { default: GetStartedPage } = await import("@/app/get-started/page");
+/**
+ * app/get-started/page.tsx is now an async Server Component whose only
+ * job is the authentication gate (see docs/behavior/matters.md) — the
+ * actual interactive wizard, including everything these tests exercise,
+ * lives in GetStartedWizard, which is what a real authenticated visit
+ * renders. Testing the wizard directly is the equivalent (and only
+ * practical) way to cover this behavior with RTL, since a Server
+ * Component can't be rendered this way.
+ */
+const { GetStartedWizard } = await import("@/components/onboarding/get-started-wizard");
 
 function jsonResponse(body: unknown) {
   return { ok: true, json: async () => body } as Response;
 }
 
-describe("GetStartedPage", () => {
+describe("GetStartedWizard", () => {
   beforeEach(() => {
-    mockIsSignedIn = false;
     mockSearchParams = new URLSearchParams();
     pushMock.mockReset();
     useIntakeStore.getState().reset();
@@ -45,6 +51,7 @@ describe("GetStartedPage", () => {
       jsonResponse({
         status: "started",
         sessionId: "s1",
+        matterId: "m1",
         intakeStatus: "interviewing",
         question: {
           id: "q1",
@@ -62,7 +69,7 @@ describe("GetStartedPage", () => {
     );
 
     const user = userEvent.setup();
-    render(<GetStartedPage />);
+    render(<GetStartedWizard matterId="m1" />);
 
     await user.click(screen.getByRole("button", { name: /get started/i }));
     await user.click(screen.getByRole("button", { name: "Criminal Case" }));
@@ -90,6 +97,7 @@ describe("GetStartedPage", () => {
           proceduralStage: "post-conviction",
           researchGoals: ["understand-case"],
           documentTypes: ["court-opinion"],
+          matterId: "m1",
         }),
       }),
     );
@@ -109,7 +117,7 @@ describe("GetStartedPage", () => {
     store.goToStep("document-types");
 
     const user = userEvent.setup();
-    render(<GetStartedPage />);
+    render(<GetStartedWizard />);
 
     await user.click(screen.getByRole("button", { name: /continue/i }));
 
@@ -156,7 +164,7 @@ describe("GetStartedPage", () => {
     );
 
     const user = userEvent.setup();
-    render(<GetStartedPage />);
+    render(<GetStartedWizard />);
 
     await user.type(screen.getByRole("textbox"), "Richland County Circuit Court");
     await user.click(screen.getByRole("button", { name: /continue/i }));
@@ -173,36 +181,7 @@ describe("GetStartedPage", () => {
     );
   });
 
-  it("offers a way back out (Return to Home) once a guest's intake is confirmed complete", async () => {
-    const store = useIntakeStore.getState();
-    store.applyStartedSession({
-      sessionId: "s1",
-      intakeStatus: "ready-for-review",
-      question: null,
-      factualSummary: "summary",
-      unresolvedInformation: [],
-      topicsCovered: [],
-    });
-    store.setAcknowledged(true);
-    store.goToStep("review");
-
-    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ status: "completed", sessionId: "s1" }));
-
-    const user = userEvent.setup();
-    render(<GetStartedPage />);
-
-    await user.click(screen.getByRole("button", { name: /confirm/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /you're ready/i })).toBeInTheDocument();
-    });
-
-    const homeLink = screen.getByRole("link", { name: /return to home/i });
-    expect(homeLink).toHaveAttribute("href", "/");
-  });
-
-  it("generates a roadmap and redirects there directly for a signed-in user once the intake is confirmed — no dead-end screen", async () => {
-    mockIsSignedIn = true;
+  it("generates a roadmap and redirects there directly once the intake is confirmed — no dead-end screen (guests can no longer reach this wizard at all)", async () => {
     const store = useIntakeStore.getState();
     store.applyStartedSession({
       sessionId: "s1",
@@ -220,7 +199,7 @@ describe("GetStartedPage", () => {
       .mockResolvedValueOnce(jsonResponse({ status: "created", roadmapId: "r1" }));
 
     const user = userEvent.setup();
-    render(<GetStartedPage />);
+    render(<GetStartedWizard />);
 
     await user.click(screen.getByRole("button", { name: /confirm/i }));
 
@@ -236,7 +215,6 @@ describe("GetStartedPage", () => {
   });
 
   it("preserves the confirmed intake and offers Try Again / Return to Dashboard when roadmap generation fails", async () => {
-    mockIsSignedIn = true;
     const store = useIntakeStore.getState();
     store.applyStartedSession({
       sessionId: "s1",
@@ -254,7 +232,7 @@ describe("GetStartedPage", () => {
       .mockResolvedValueOnce(jsonResponse({ status: "generation-failed", message: "Could not build a valid roadmap right now." }));
 
     const user = userEvent.setup();
-    render(<GetStartedPage />);
+    render(<GetStartedWizard />);
 
     await user.click(screen.getByRole("button", { name: /confirm/i }));
 
@@ -269,7 +247,6 @@ describe("GetStartedPage", () => {
   });
 
   it("resumes a saved session from ?sessionId=, restoring prior answers without repeating them", async () => {
-    mockIsSignedIn = true;
     mockSearchParams = new URLSearchParams("sessionId=s1");
 
     vi.mocked(fetch).mockResolvedValueOnce(
@@ -301,7 +278,7 @@ describe("GetStartedPage", () => {
       }),
     );
 
-    render(<GetStartedPage />);
+    render(<GetStartedWizard />);
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "What was the outcome?" })).toBeInTheDocument();
@@ -313,11 +290,10 @@ describe("GetStartedPage", () => {
     ]);
   });
 
-  it("shows Save and Exit, Return to Dashboard, and Log Out for a signed-in user mid-intake", async () => {
-    mockIsSignedIn = true;
+  it("shows Save and Exit, Return to Dashboard, and Log Out mid-intake", async () => {
     useIntakeStore.getState().goToStep("case-type");
 
-    render(<GetStartedPage />);
+    render(<GetStartedWizard />);
 
     expect(screen.getByRole("button", { name: /save and exit/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /return to dashboard/i })).toBeInTheDocument();
@@ -325,7 +301,6 @@ describe("GetStartedPage", () => {
   });
 
   it("redirects to /first-login instead of showing a dead-end error when starting the interview requires a password change first", async () => {
-    mockIsSignedIn = true;
     const store = useIntakeStore.getState();
     store.setCaseType("criminal");
     store.setJurisdiction("SC");
@@ -339,7 +314,7 @@ describe("GetStartedPage", () => {
     );
 
     const user = userEvent.setup();
-    render(<GetStartedPage />);
+    render(<GetStartedWizard />);
 
     await user.click(screen.getByRole("button", { name: /continue/i }));
 
@@ -350,13 +325,12 @@ describe("GetStartedPage", () => {
   });
 
   it("redirects to /first-login when resuming a session requires a password change first", async () => {
-    mockIsSignedIn = true;
     mockSearchParams = new URLSearchParams("sessionId=s1");
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse({ status: "must-change-password", message: "You must change your password before continuing." }),
     );
 
-    render(<GetStartedPage />);
+    render(<GetStartedWizard />);
 
     await waitFor(() => {
       expect(pushMock).toHaveBeenCalledWith("/first-login");
@@ -364,7 +338,6 @@ describe("GetStartedPage", () => {
   });
 
   it("Save and Exit redirects to the dashboard without marking the intake complete", async () => {
-    mockIsSignedIn = true;
     const store = useIntakeStore.getState();
     store.applyStartedSession({
       sessionId: "s1",
@@ -377,7 +350,7 @@ describe("GetStartedPage", () => {
     store.goToStep("ai-interview");
 
     const user = userEvent.setup();
-    render(<GetStartedPage />);
+    render(<GetStartedWizard />);
 
     await user.click(screen.getByRole("button", { name: /save and exit/i }));
 

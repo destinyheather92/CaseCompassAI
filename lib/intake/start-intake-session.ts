@@ -4,15 +4,22 @@ import { getServerEnv } from "@/lib/env";
 import { recordAuditEvent } from "@/lib/security/audit-log";
 import { startIntakeSessionSchema } from "@/lib/intake/intake-deterministic-schema";
 import { toPrismaIntakeStatus, fromAiInterviewStatus } from "@/lib/intake/intake-status";
+import { generateDefaultMatterTitle } from "@/lib/matters/matter-title";
 import { defaultOpenAIInterviewerProvider } from "@/lib/ai/providers/openai-intake-interviewer";
 import type { IntakeInterviewerProvider } from "@/lib/ai/providers/intake-interviewer-provider";
 import type { IntakeInterviewContext, IntakeQuestion, IntakeStatus } from "@/types/intake-interview";
 
 export interface StartIntakeSessionActor {
-  /** AppUser.id (not clerkUserId) — null for guests. */
-  userId: string | null;
+  /** AppUser.id (not clerkUserId) — intake now always requires authentication, so this is never null. */
+  userId: string;
   institutionId: string | null;
   facilityId: string | null;
+  /**
+   * The matter this intake belongs to. Callers must already have verified
+   * ownership (see requireOwnedMatter in app/api/intake/interview/start/route.ts)
+   * before passing this through — this function trusts it as-is.
+   */
+  matterId?: string | null;
 }
 
 export interface StartIntakeSessionDeps {
@@ -23,6 +30,7 @@ export type StartIntakeSessionResult =
   | {
       status: "started";
       sessionId: string;
+      matterId: string;
       intakeStatus: IntakeStatus;
       question: IntakeQuestion | null;
       factualSummary: string;
@@ -86,9 +94,29 @@ export async function startIntakeSession(
   const { response } = aiResult;
   const intakeStatus = fromAiInterviewStatus(response.status);
 
+  // A matter is required for every authenticated intake — reuse the one
+  // the caller already verified ownership of, or create a fresh one so a
+  // direct visit to /get-started (no matterId in the URL) still works.
+  const matterId =
+    actor.matterId ??
+    (
+      await prisma.matter.create({
+        data: {
+          userId: actor.userId,
+          title: generateDefaultMatterTitle({
+            existingMatterCount: await prisma.matter.count({ where: { userId: actor.userId } }),
+            jurisdiction: parsed.data.jurisdiction,
+          }),
+          jurisdiction: parsed.data.jurisdiction,
+          matterType: parsed.data.caseType,
+        },
+      })
+    ).id;
+
   const session = await prisma.intakeSession.create({
     data: {
       userId: actor.userId,
+      matterId,
       institutionId: actor.institutionId,
       facilityId: actor.facilityId,
       status: toPrismaIntakeStatus(intakeStatus),
@@ -117,6 +145,7 @@ export async function startIntakeSession(
   return {
     status: "started",
     sessionId: session.id,
+    matterId,
     intakeStatus,
     question: response.question,
     factualSummary: response.collectedFactsSummary,

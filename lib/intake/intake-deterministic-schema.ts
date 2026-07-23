@@ -38,6 +38,8 @@ export const startIntakeSessionSchema = z
     proceduralStage: z.enum(PROCEDURAL_STAGES),
     researchGoals: z.array(z.enum(RESEARCH_GOALS)).min(1, "Select at least one research goal.").max(6),
     documentTypes: z.array(z.enum(DOCUMENT_TYPES)).min(1, "Select at least one document option.").max(7),
+    /** The matter this intake belongs to — verified server-side against the caller (see app/api/intake/interview/start/route.ts); a new matter is created automatically if omitted. */
+    matterId: z.string().trim().min(1).max(64).optional(),
   })
   .strict()
   .refine((data) => !(data.documentTypes.includes("none") && data.documentTypes.length > 1), {

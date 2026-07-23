@@ -35,7 +35,7 @@ export function getDashboardNavItems(context: DashboardNavContext): DashboardNav
     },
     { href: "/dashboard/research", label: "Research", icon: Search },
     { href: "/dashboard/saved", label: "Saved", icon: Bookmark },
-    { href: "/resources/legal-research-basics", label: "Resources", icon: BookOpen },
+    { href: "/dashboard/resources", label: "Resources", icon: BookOpen },
     { href: "/dashboard/settings", label: "Settings", icon: Settings },
   ];
 }

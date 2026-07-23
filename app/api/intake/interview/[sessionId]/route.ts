@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireOptionalUser } from "@/lib/auth/authorization";
+import { requireAuthenticatedUser } from "@/lib/auth/authorization";
 import { authorizationFailureResponse } from "@/lib/auth/authorization-http";
 import { getIntakeSession } from "@/lib/intake/get-intake-session";
 
@@ -19,7 +19,7 @@ function statusCodeFor(status: string): number {
 }
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ sessionId: string }> }) {
-  const authResult = await requireOptionalUser();
+  const authResult = await requireAuthenticatedUser();
   if (!authResult.ok) {
     const failure = authorizationFailureResponse(authResult.reason);
     return NextResponse.json(failure.body, { status: failure.status });

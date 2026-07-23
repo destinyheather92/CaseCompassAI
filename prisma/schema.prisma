@@ -61,6 +61,12 @@ enum IntakeStatus {
   ABANDONED
 }
 
+enum MatterStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
 enum RoadmapSourceKind {
   AI_GENERATED
   DETERMINISTIC_FALLBACK
@@ -200,6 +206,7 @@ model User {
   createdBy    User?   @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdUsers User[]  @relation("UserCreatedBy")
 
+  matters           Matter[]
   intakeSessions    IntakeSession[]
   roadmaps          ResearchRoadmap[]
   roadmapProgress   RoadmapProgress[]
@@ -219,10 +226,50 @@ model User {
   @@index([housingUnit])
 }
 
+/// A single legal matter belonging to one user — the unit that intakes,
+/// roadmaps, and saved items are grouped under, so a user can research
+/// more than one legal issue at once without the data mixing together.
+/// `userId` is required (unlike IntakeSession/ResearchRoadmap) because a
+/// Matter can only ever be created by an authenticated user — see
+/// docs/behavior/matters.md.
+model Matter {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// User-chosen or auto-generated (see lib/matters/matter-title.ts) —
+  /// never left blank in the UI.
+  title        String
+  caseNumber   String?
+  court        String?
+  jurisdiction String?
+  /// Short, denormalized description of the legal issue/case type, shown
+  /// on the matter card — derived from the intake, not independently
+  /// editable.
+  matterType   String?
+  status       MatterStatus @default(ACTIVE)
+
+  intakeSessions IntakeSession[]
+  roadmaps       ResearchRoadmap[]
+  savedResources SavedResource[]
+  savedCases     SavedCase[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
 model IntakeSession {
   id            String       @id @default(cuid())
   userId        String?
   user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Optional — a guest (never-authenticated) intake session has no
+  /// matter at all, mirroring the guest `userId: null` path; a matter is
+  /// created only once the caller is authenticated.
+  matterId      String?
+  matter        Matter?      @relation(fields: [matterId], references: [id], onDelete: SetNull)
   institutionId String?
   institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   facilityId    String?
@@ -286,6 +333,10 @@ model ResearchRoadmap {
   id              String         @id @default(cuid())
   userId          String?
   user            User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Optional for the same reason as IntakeSession.matterId — a guest
+  /// roadmap (if one ever existed) would have none.
+  matterId        String?
+  matter          Matter?        @relation(fields: [matterId], references: [id], onDelete: SetNull)
   intakeSessionId String?
   intakeSession   IntakeSession? @relation(fields: [intakeSessionId], references: [id], onDelete: SetNull)
   institutionId   String?
@@ -307,6 +358,7 @@ model ResearchRoadmap {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([matterId])
   @@index([institutionId])
 }
 
@@ -343,6 +395,12 @@ model SavedResource {
   id           String            @id @default(cuid())
   userId       String
   user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Set when this save happened within a specific matter's roadmap
+  /// (e.g. ROADMAP_STEP, NOTE) — left null for saves made outside any
+  /// matter context (e.g. a glossary term saved from the general
+  /// Resources pages), which stay account-wide rather than per-matter.
+  matterId     String?
+  matter       Matter?           @relation(fields: [matterId], references: [id], onDelete: SetNull)
   resourceType SavedResourceType
   /// Stable identifier within resourceType (e.g. a resource slug, a
   /// glossary term name, a roadmap step id) — what the uniqueness
@@ -357,8 +415,13 @@ model SavedResource {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// Global uniqueness for matter-less (account-wide) saves.
   @@unique([userId, resourceType, resourceKey])
+  /// Per-matter uniqueness — the same resource can be saved once per
+  /// matter without colliding with a save in a different matter.
+  @@unique([matterId, resourceType, resourceKey])
   @@index([userId, createdAt])
+  @@index([matterId])
 }
 
 /// A verified case a user has chosen to keep, retrieved through a real
@@ -371,6 +434,14 @@ model SavedCase {
   id     String @id @default(cuid())
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Set when saved from within a specific matter's roadmap/case search;
+  /// left null for a standalone save not tied to any matter. The same
+  /// case can be saved once per matter (see the matterId unique
+  /// constraint below) — it may legitimately be relevant to more than
+  /// one of a user's matters.
+  matterId String?
+  matter   Matter? @relation(fields: [matterId], references: [id], onDelete: SetNull)
 
   roadmapId String?
   roadmap   ResearchRoadmap? @relation(fields: [roadmapId], references: [id], onDelete: SetNull)
@@ -396,8 +467,10 @@ model SavedCase {
   updatedAt DateTime @updatedAt
 
   @@unique([userId, providerName, providerCaseId])
+  @@unique([matterId, providerName, providerCaseId])
   @@index([userId, createdAt])
   @@index([roadmapId])
+  @@index([matterId])
 }
 
 /// Every legal-case provider this app knows about — only COURTLISTENER is

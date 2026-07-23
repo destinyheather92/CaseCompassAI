@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Building2 } from "lucide-react";
+import { Building2, Play } from "lucide-react";
 import { facilityAudiences, facilityBenefits, facilitiesContent } from "@/lib/site-data";
+import { DemoVideoModal } from "@/components/site/demo-video-modal";
 
 export function ForFacilities() {
   return (
@@ -60,7 +61,7 @@ export function ForFacilities() {
           })}
         </ul>
 
-        <div className="mt-14 flex justify-center">
+        <div className="mt-14 flex flex-col justify-center gap-4 sm:flex-row">
           <Link
             href="/institution/register"
             className="group inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-cc-purple to-cc-violet px-7 py-3.5 text-sm font-semibold text-white shadow-[0_0_30px_rgba(139,92,246,0.35)] transition-all duration-300 hover:shadow-[0_0_44px_rgba(168,85,247,0.55)] hover:-translate-y-0.5 outline-none focus-visible:ring-2 focus-visible:ring-cc-teal focus-visible:ring-offset-2 focus-visible:ring-offset-cc-bg"
@@ -71,6 +72,21 @@ export function ForFacilities() {
             />
             {facilitiesContent.cta}
           </Link>
+          <DemoVideoModal
+            videoSrc="/demos/facility-demo.mp4"
+            posterSrc="/demos/facility-demo-poster.jpg"
+            title="Facility Demo"
+            description="A walkthrough of the institutional workflow: facility registration, the administrator dashboard, and how institutional users access CaseCompass — separate from facility-administrator and individual-user functionality."
+            trigger={
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 rounded-full border border-cc-purple/40 bg-cc-bg-secondary/60 px-7 py-3.5 text-sm font-semibold text-cc-text transition-all duration-300 hover:border-cc-purple/80 hover:bg-white/[0.03] outline-none focus-visible:ring-2 focus-visible:ring-cc-purple focus-visible:ring-offset-2 focus-visible:ring-offset-cc-bg"
+              >
+                <Play className="size-4" aria-hidden="true" />
+                Watch Facility Demo
+              </button>
+            }
+          />
         </div>
       </div>
     </section>

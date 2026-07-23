@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CaseCompass AI
 
-## Getting Started
+Guided legal research for people who can't afford a lawyer — individuals and incarcerated users describe their situation in plain language, and CaseCompass turns it into a structured research roadmap: what to look for, why it matters, and real, verified case law to start from. It is explicitly **not** legal advice — every AI-generated explanation is labeled as such and kept separate from the original court opinion it describes.
 
-First, run the development server:
+## What it does
+
+- **Guided intake.** A short set of deterministic questions (case type, jurisdiction, procedural stage, research goals, document types) followed by an adaptive, OpenAI-backed interview that asks only what it still needs to know.
+- **Research roadmaps.** Each completed intake becomes a step-by-step roadmap grouped by topic, with plain-language explanations of *why* each step matters.
+- **Verified case search.** Roadmap topics are searched against real case law (via CourtListener) — every result carries its citation, court, date, and a verification badge. Nothing is fabricated; if a provider isn't configured or returns nothing, the UI says so rather than inventing results.
+- **Multiple matters per user.** An individual can run more than one legal matter at once, each with its own isolated intake, roadmap, saved cases, and notes — renaming a matter never touches its ID or disconnects anything linked to it.
+- **Educational resources.** A library of plain-language guides (reading a court opinion, legal research basics, citations, terminology, research safety, and the tool's own limits), reachable from both the public site and the authenticated dashboard.
+- **Institutional accounts.** Facilities (prisons, jails, reentry programs, law libraries, legal-aid partners) can register, issue accounts to their users, and manage them — with strict role separation: a facility administrator can never generate a roadmap for the institution itself, only for its users.
+
+## Tech stack
+
+- [Next.js 16](https://nextjs.org) (App Router, React Server Components) + [React 19](https://react.dev) + TypeScript
+- [Tailwind CSS v4](https://tailwindcss.com) + [base-ui](https://base-ui.com) primitives (dialogs, checkboxes, radio groups)
+- [Clerk](https://clerk.com) for authentication
+- [Prisma 7](https://www.prisma.io) + Supabase Postgres for application data (Clerk owns credentials; Prisma owns role/authorization/domain data)
+- [OpenAI](https://platform.openai.com) (Responses API, Structured Outputs) for the adaptive intake interview and case explanations
+- [CourtListener](https://www.courtlistener.com) for real, verified case search
+- [Vitest](https://vitest.dev) (unit/integration) + [Playwright](https://playwright.dev) (end-to-end) for testing
+
+## Getting started
 
 ```bash
+npm install
+cp .env.example .env.local   # fill in real values — see below
+npm run db:seed              # optional: seeds sample data
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+See `.env.example` for the full list with inline explanations. At minimum you'll need:
 
-## Learn More
+| Variable | Purpose |
+|---|---|
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | Authentication |
+| `DATABASE_URL` / `DIRECT_URL` | Supabase Postgres (pooled + direct connections) |
+| `OPENAI_API_KEY` | Adaptive intake interview and case explanations. If unset, the interview fails safely with a clear message — nothing is faked. |
+| `CASE_SEARCH_PROVIDER` / `COURTLISTENER_API_TOKEN` | Verified case search. Defaults to `none`, which shows an honest "not available yet" state rather than fabricating results. |
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run dev          # start the dev server
+npm run build        # production build
+npm run lint         # eslint
+npm run type-check   # tsc --noEmit
+npm test             # vitest (unit + integration)
+npm run test:e2e     # playwright (end-to-end)
+npm run db:seed      # seed sample data (prisma/seed.ts)
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Documentation
 
-## Deploy on Vercel
+`docs/behavior/` is the source of truth for how the product is *supposed* to behave — each file documents one area (intake, roadmap generation, verified case search, matters, institutional accounts, authentication, authorization) alongside the tests that enforce it. `docs/behavior/security-invariants.md` is a running table of every security-relevant guarantee the app makes and where it's enforced. `docs/behavior/implementation-log.md` is an append-only log of what was built, when, and why. `docs/demos/README.md` documents the two recorded product-demo videos and how to regenerate them.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Project structure
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+app/                  Routes (Server Components by default; "use client" only where interactive)
+components/           UI, grouped by feature area (onboarding, dashboard, site, auth, ui primitives)
+lib/                  Domain logic — auth, matters, case-search, resources data, etc.
+prisma/               Schema, migrations, seed data
+scripts/              One-off operational scripts (backfills, demo-video recording) — not part of the app
+tests/
+  unit/                Pure logic
+  integration/          Service layer + API routes (real test database)
+  components/          Component behavior (Testing Library)
+  e2e/                  Full-flow specs against a real running dev server (Playwright)
+docs/behavior/         Expected behavior + security invariants, one file per feature area
+```

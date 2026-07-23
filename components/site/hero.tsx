@@ -5,6 +5,7 @@ import Image from "next/image";
 import { motion, type Variants } from "framer-motion";
 import { Compass, Lock, Play } from "lucide-react";
 import { HeroRoadmapVisual, MobileRoadmapBlock } from "@/components/site/hero-roadmap-visual";
+import { DemoVideoModal } from "@/components/site/demo-video-modal";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -91,13 +92,21 @@ function HeroCopy() {
           />
           Build My Research Roadmap
         </Link>
-        <Link
-          href="#demo"
-          className="pointer-events-auto inline-flex items-center justify-center gap-2 rounded-full border border-cc-purple/40 bg-cc-bg-secondary/60 px-7 py-3.5 text-sm font-semibold text-cc-text transition-all duration-300 hover:border-cc-purple/80 hover:bg-white/[0.03] outline-none focus-visible:ring-2 focus-visible:ring-cc-purple focus-visible:ring-offset-2 focus-visible:ring-offset-cc-bg"
-        >
-          <Play className="size-4" aria-hidden="true" />
-          Watch 60 Second Demo
-        </Link>
+        <DemoVideoModal
+          videoSrc="/demos/individual-user-demo.mp4"
+          posterSrc="/demos/individual-user-demo-poster.jpg"
+          title="60-Second Individual Demo"
+          description="A walkthrough of the individual-user experience: logging in, building a research roadmap, and viewing verified cases and plain-language explanations."
+          trigger={
+            <button
+              type="button"
+              className="pointer-events-auto inline-flex items-center justify-center gap-2 rounded-full border border-cc-purple/40 bg-cc-bg-secondary/60 px-7 py-3.5 text-sm font-semibold text-cc-text transition-all duration-300 hover:border-cc-purple/80 hover:bg-white/[0.03] outline-none focus-visible:ring-2 focus-visible:ring-cc-purple focus-visible:ring-offset-2 focus-visible:ring-offset-cc-bg"
+            >
+              <Play className="size-4" aria-hidden="true" />
+              Watch 60 Second Demo
+            </button>
+          }
+        />
       </motion.div>
 
       <motion.p

@@ -4,6 +4,7 @@ import { requireDashboardAccess } from "@/lib/auth/dashboard-authorization";
 import { getDashboardOverview } from "@/lib/dashboard/get-dashboard-overview";
 import { getDashboardCasesPreview } from "@/lib/dashboard/get-dashboard-cases-preview";
 import { WelcomeHeader } from "@/components/dashboard/welcome-header";
+import { MattersList } from "@/components/dashboard/matters-list";
 import { VerifiedCasesPreview } from "@/components/dashboard/verified-cases-preview";
 import { DashboardDisclaimer } from "@/components/dashboard/dashboard-disclaimer";
 import { ResearchStatusCard } from "@/components/dashboard/research-status-card";
@@ -47,12 +48,16 @@ export default async function DashboardOverviewPage({
         <ResearchStatusCard researchStatus={overview.researchStatus} primaryAction={overview.primaryAction} />
       </div>
 
+      <MattersList />
+
       {overview.activeIntake === null ? (
         <DashboardEmptyState />
       ) : (
         <>
           <section className="flex flex-col gap-4">
-            <h2 className="text-xs font-semibold tracking-[0.15em] text-cc-muted uppercase">Overview</h2>
+            <h2 className="text-xs font-semibold tracking-[0.15em] text-cc-muted uppercase">
+              Overview <span className="normal-case tracking-normal text-cc-muted/70">— most recently updated matter</span>
+            </h2>
             <IntakeSummaryCard intake={overview.activeIntake} />
           </section>
 

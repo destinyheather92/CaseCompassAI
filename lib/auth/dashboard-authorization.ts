@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { requireAuthenticatedUser, type AppUser, type AuthorizationResult } from "@/lib/auth/authorization";
-import type { IntakeSession, ResearchRoadmap, SavedResource, SavedCase } from "@/lib/generated/prisma/client";
+import type { IntakeSession, ResearchRoadmap, SavedResource, SavedCase, Matter } from "@/lib/generated/prisma/client";
 
 /**
  * Any authenticated, active, password-complete user may access their own
@@ -23,6 +23,20 @@ export type OwnedResourceResult<T> = { ok: true; resource: T } | { ok: false; re
  * shape. Institution staff get no bypass here: private research is
  * owner-only regardless of role.
  */
+/**
+ * A user's Matter — the same "return not-found, never forbidden" policy
+ * as every other owned-resource check below. Every matter-scoped route
+ * (intake, roadmap, saved items) must resolve back to a matter the
+ * caller owns before trusting a client-supplied id anywhere in the URL.
+ */
+export async function requireOwnedMatter(matterId: string, user: AppUser): Promise<OwnedResourceResult<Matter>> {
+  const matter = await prisma.matter.findUnique({ where: { id: matterId } });
+  if (!matter || matter.userId !== user.id) {
+    return { ok: false, reason: "not-found" };
+  }
+  return { ok: true, resource: matter };
+}
+
 export async function requireOwnedIntake(
   intakeId: string,
   user: AppUser,

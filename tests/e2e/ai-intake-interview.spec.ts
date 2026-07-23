@@ -5,12 +5,58 @@ import { test, expect } from "@playwright/test";
  * with the AI interview turns mocked at the network boundary
  * (page.route) rather than via any production-code test backdoor — no
  * real, paid OpenAI calls are made. See docs/behavior/ai-intake-interview.md.
+ *
+ * Intake now always requires a real, signed-in account (see
+ * docs/behavior/matters.md), so this spec creates one real demo account
+ * via Clerk's Backend API and logs in for real before driving the
+ * (otherwise fully mocked) wizard — the one genuinely real step in this
+ * test, and the only way to reach /get-started at all now.
  */
-test("guided intake: Layer 1 -> AI interview -> edit -> review -> confirm, with no legal advice or roadmap generated", async ({
+let credentials: { username: string; password: string };
+
+test.beforeAll(async () => {
+  const { execFileSync } = await import("node:child_process");
+  const path = await import("node:path");
+  // Run in a separate tsx-executed process — see the helper's own
+  // docstring for why importing @clerk/nextjs/server directly here
+  // doesn't work.
+  // shell:true is required for npx to resolve on Windows (npx.cmd) —
+  // safe here since none of the arguments come from untrusted input.
+  const output = execFileSync("npx", ["tsx", path.join(__dirname, "helpers", "create-demo-account.ts")], {
+    encoding: "utf-8",
+    cwd: path.join(__dirname, "..", ".."),
+    shell: true,
+  });
+  // The environment loader (dotenvx) may print a noise line to stdout
+  // before our own output — the helper's JSON is always the last line.
+  const lines = output.trim().split("\n");
+  credentials = JSON.parse(lines[lines.length - 1]);
+});
+
+test("guided intake: Layer 1 -> AI interview -> edit -> review -> confirm, with no legal advice leaked and no fabricated roadmap content", async ({
   page,
 }) => {
   let startCallCount = 0;
   let answerCallCount = 0;
+
+  // Real login — the only unmocked network activity in this test.
+  await page.goto("/sign-in");
+  await page.getByRole("textbox", { name: /email address or username/i }).fill(credentials.username);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("textbox", { name: "Password", exact: true }).fill(credentials.password);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.waitForURL(/^(?!.*\/sign-in).*$/, { timeout: 20000 });
+
+  // Roadmap generation itself stays mocked too — this spec's job is the
+  // wizard UI, not proving a real roadmap gets created (that's covered
+  // by the demo scripts and integration tests).
+  await page.route("**/api/dashboard/roadmap/generate", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ status: "generation-failed", message: "Could not build a valid roadmap right now." }),
+    });
+  });
 
   await page.route("**/api/intake/interview/start", async (route) => {
     startCallCount += 1;
@@ -164,10 +210,11 @@ test("guided intake: Layer 1 -> AI interview -> edit -> review -> confirm, with 
   await page.getByRole("checkbox").click();
   await page.getByRole("button", { name: /confirm/i }).click();
 
-  // 9. Reach the ready-for-roadmap state.
-  await expect(page.getByRole("heading", { name: /you're ready/i })).toBeVisible();
+  // 9. Intake is confirmed (real, unmocked /complete call under the
+  // hood — only roadmap generation itself is mocked, per above).
+  await expect(page.getByRole("heading", { name: /your intake is saved/i })).toBeVisible();
 
-  // 10. No legal advice, no roadmap UI — this phase stops at confirmation.
+  // 10. No legal advice, no fabricated roadmap content anywhere on the page.
   const bodyText = await page.locator("body").innerText();
   expect(bodyText.toLowerCase()).not.toContain("you should file");
   expect(bodyText.toLowerCase()).not.toContain("your rights were violated");

@@ -2,6 +2,47 @@
 
 Append-only. Add a new dated entry per completed behavior — don't edit past entries except to fix a factual error.
 
+## 2026-07-22 — Multiple matters per user, mandatory intake authentication, and two product demo videos
+
+### Expected Behavior
+
+Individual users can create and manage more than one legal matter, each with its own isolated intake/roadmap/cases/notes. Beginning an intake, creating a matter, or generating a roadmap now always requires a real, signed-in account, enforced server-side, with a clear "Log in or create an account" prompt and a return-to-intended-action flow after login. Two homepage buttons ("Watch 60 Second Demo," "Watch Facility Demo") play real screen recordings of the actual application. Facility-administrator/institutional-user/individual-user role separation is preserved and verified.
+
+### Root cause / starting state (confirmed by inspection before any change)
+
+- `IntakeSession`/`ResearchRoadmap`/`RoadmapProgress`/`SavedResource`/`SavedCase` were all keyed directly by `userId` — no grouping concept above the individual row existed, so a user could only ever have one coherent intake/roadmap "thread."
+- Intake was **intentionally** guest-reachable end to end (`requireOptionalUser()` on every `/api/intake/**` route, documented and tested as such) — a deliberate earlier design decision this task explicitly asked to reverse.
+- The homepage's "Watch 60 Second Demo" button linked to a dead `#demo` anchor with no matching element anywhere in the app. No "Request Facility Demo" button existed anywhere (the only facility CTA was a real link to `/institution/register`).
+- Role separation (facility-admin routing, institution-admin never reaching intake, ownership-scoped queries) was already solid from earlier work this session — verified, not rebuilt.
+
+### Implementation
+
+**Schema** (migration `20260722000000_add_matters`, additive/non-destructive): new `Matter` model; optional `matterId` FK added to `IntakeSession`/`ResearchRoadmap`/`SavedResource`/`SavedCase`, with the pre-existing `userId` column left untouched on every one — see `docs/behavior/matters.md` for exactly why this made every existing ownership check remain correct with zero changes. `scripts/backfill-matters.ts` (idempotent) created one default matter per existing user with pre-existing data and reattached it — confirmed 6 users backfilled, nothing deleted.
+
+**Service layer**: `lib/matters/{create-matter,list-matters,matter-title}.ts`; `requireOwnedMatter` added to `lib/auth/dashboard-authorization.ts` (same `not-found`-never-`forbidden` pattern as every other `requireOwned*`). `startIntakeSession`'s actor type changed from `userId: string | null` to a required `string` plus an optional, pre-verified `matterId`; `createRoadmapFromIntake` copies the intake's `matterId` onto the created roadmap; `saveCase` derives `matterId` from the roadmap (never client input).
+
+**Auth tightening**: all four `/api/intake/**` routes switched `requireOptionalUser()` → `requireAuthenticatedUser()`. `app/get-started/page.tsx` split into a server component (auth gate only) plus `components/onboarding/get-started-wizard.tsx` (the actual client wizard, unchanged in behavior except the dead-end guest "You're ready" screen — impossible to reach now — was removed; Confirm always attempts roadmap generation). `components/auth/auth-required-prompt.tsx` + `lib/auth/safe-redirect.ts` (open-redirect-safe `redirect_url` validation) + `forceRedirectUrl`/`signUpForceRedirectUrl` props on `/sign-in`/`/sign-up` implement the full return-to-intended-action loop.
+
+**Dashboard UI**: `components/dashboard/matters-list.tsx` (new "Your Matters" section, New Matter button, per-matter status/progress cards) added above the existing single-thread overview section (relabeled "most recently updated matter," not removed). `lib/dashboard/research-status.ts`'s existing `computeResearchStatus`/`primaryActionFor` reused per-matter rather than rebuilt.
+
+**Demo videos**: `components/site/demo-video-modal.tsx` (Dialog-based, keyboard-accessible via base-ui's built-in focus trap/Escape-to-close, never autoplays) wired to both homepage buttons. `scripts/demos/{prep-individual-account,individual-demo,facility-demo}.ts` — real Playwright automation against the real running app (real Clerk login, real AI interview turn, real CourtListener search for the individual demo; real facility registration + first-login + user creation for the facility demo), producing `public/demos/individual-user-demo.mp4` (2:41) and `public/demos/facility-demo.mp4` (1:08) via `ffmpeg-static` (Playwright's own bundled ffmpeg can't produce mp4 — see the pitch-video entry below). See `docs/demos/README.md`.
+
+### Verification
+
+- `npx vitest run`: 1011 tests passed, 3 skipped, 0 failed.
+- `npx tsc --noEmit`: clean. `npx eslint .`: clean.
+- `npx playwright test`: 9/9 passed, including new `tests/e2e/auth-required.spec.ts` (auth-gate coverage) and a rewritten `tests/e2e/ai-intake-interview.spec.ts` (now logs in with a real demo account first, since guest access no longer exists).
+- `npx next build`: clean; `/api/matters` and the now-dynamic `/get-started` route both present.
+- New integration tests: `tests/integration/matters/{create-matter,list-matters}.test.ts`, a `requireOwnedMatter` describe block added to `tests/integration/authorization/dashboard-authorization.test.ts`.
+- Both demo videos actually recorded and verified playable (durations confirmed via ffmpeg) — not just scripted.
+
+### Known limitations
+
+- Individual-demo video duration (2:41) and facility-demo duration (1:08) both diverge from the requested "~60 seconds" — real page loads, a real OpenAI call, and real CourtListener searches added unpredictable time beyond the scripts' own pacing; documented in `docs/demos/README.md` rather than silently claimed as exact.
+- `SavedResource` saves made outside a matter's roadmap context stay account-wide, not matter-scoped (see `docs/behavior/matters.md`'s own limitations section).
+- No dedicated "matter detail" page or matter status (archive/complete) UI — opening a matter reuses its existing intake/roadmap detail page.
+- Every intake/roadmap/saved-case ownership check is unchanged (`userId`-based) — matter isolation is enforced through `matterId` being correctly attached at creation time, not through a new, separately-audited authorization layer. This was a deliberate, documented tradeoff (see security invariant #78), not an oversight.
+
 ## 2026-07-21 — Progressive multi-stage case search pipeline (never a dead end)
 
 ### Expected Behavior

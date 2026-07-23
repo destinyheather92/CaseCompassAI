@@ -50,11 +50,10 @@ describe("POST /api/intake/interview/answer", () => {
     createdUserIds.length = 0;
   });
 
-  it("allows a guest request", async () => {
-    vi.mocked(submitIntakeAnswer).mockResolvedValueOnce(answeredResult);
+  it("rejects a guest (unauthenticated) request — intake now always requires a real account", async () => {
     const response = await POST(postRequest(validInput));
-    expect(response.status).toBe(200);
-    expect(submitIntakeAnswer).toHaveBeenCalledWith(validInput, null);
+    expect(response.status).toBe(401);
+    expect(submitIntakeAnswer).not.toHaveBeenCalled();
   });
 
   it("passes the authenticated AppUser through to the service", async () => {
@@ -90,12 +89,24 @@ describe("POST /api/intake/interview/answer", () => {
     ["invalid-request", 400],
     ["provider-unavailable", 503],
   ] as const)("maps service status %s to HTTP %d", async (status, expectedCode) => {
+    const user = await prisma.user.create({
+      data: { clerkUserId: `clerk-intake-answer-map-${Date.now()}-${Math.random()}`, role: "INDIVIDUAL", accountStatus: "ACTIVE" },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
     vi.mocked(submitIntakeAnswer).mockResolvedValueOnce({ status, message: "x" } as never);
     const response = await POST(postRequest(validInput));
     expect(response.status).toBe(expectedCode);
   });
 
   it("rejects a malformed JSON body", async () => {
+    const user = await prisma.user.create({
+      data: { clerkUserId: `clerk-intake-answer-badjson-${Date.now()}`, role: "INDIVIDUAL", accountStatus: "ACTIVE" },
+    });
+    createdUserIds.push(user.id);
+    mockClerkUserId = user.clerkUserId;
+
     const response = await POST(
       new NextRequest("https://example.com/api/intake/interview/answer", { method: "POST", body: "{not json" }),
     );

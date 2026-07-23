@@ -6,6 +6,7 @@ import {
   requireOwnedRoadmap,
   requireOwnedSavedItem,
   requireOwnedSavedCase,
+  requireOwnedMatter,
 } from "@/lib/auth/dashboard-authorization";
 import type { AppUser } from "@/lib/auth/authorization";
 
@@ -14,6 +15,7 @@ const createdIntakeIds: string[] = [];
 const createdRoadmapIds: string[] = [];
 const createdSavedIds: string[] = [];
 const createdSavedCaseIds: string[] = [];
+const createdMatterIds: string[] = [];
 
 function makeAppUser(id: string): AppUser {
   return {
@@ -212,6 +214,37 @@ describe("requireOwnedSavedCase", () => {
 
   it("returns not-found for a nonexistent saved case id (URL manipulation)", async () => {
     const result = await requireOwnedSavedCase("does-not-exist", makeAppUser("some-user"));
+    expect(result).toEqual({ ok: false, reason: "not-found" });
+  });
+});
+
+describe("requireOwnedMatter", () => {
+  afterAll(async () => {
+    await prisma.matter.deleteMany({ where: { id: { in: createdMatterIds } } });
+  });
+
+  it("returns the matter when the caller owns it", async () => {
+    const owner = await makeUser();
+    const matter = await prisma.matter.create({ data: { userId: owner.id, title: "Test Matter" } });
+    createdMatterIds.push(matter.id);
+
+    const result = await requireOwnedMatter(matter.id, makeAppUser(owner.id));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.resource.id).toBe(matter.id);
+  });
+
+  it("returns not-found (never forbidden) for a different user's matter — changing the id in a URL cannot expose it", async () => {
+    const owner = await makeUser();
+    const intruder = await makeUser();
+    const matter = await prisma.matter.create({ data: { userId: owner.id, title: "Test Matter" } });
+    createdMatterIds.push(matter.id);
+
+    const result = await requireOwnedMatter(matter.id, makeAppUser(intruder.id));
+    expect(result).toEqual({ ok: false, reason: "not-found" });
+  });
+
+  it("returns not-found for a nonexistent matter id (URL manipulation)", async () => {
+    const result = await requireOwnedMatter("does-not-exist", makeAppUser("some-user"));
     expect(result).toEqual({ ok: false, reason: "not-found" });
   });
 });

@@ -206,7 +206,7 @@ export const featureItems: FeatureItem[] = [
 
 export const facilitiesContent = {
   heading: "A scalable legal education platform for institutions",
-  cta: "Request a Facility Demo",
+  cta: "Register a Facility",
 };
 
 export type FacilityAudience = {

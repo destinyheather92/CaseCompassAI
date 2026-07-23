@@ -51,6 +51,7 @@ export async function createRoadmapFromIntake(intakeId: string, actorUser: AppUs
   const roadmap = await prisma.researchRoadmap.create({
     data: {
       userId: actorUser.id,
+      matterId: intake.matterId,
       intakeSessionId: intake.id,
       institutionId: actorUser.institutionId,
       title: validated.data.title,
